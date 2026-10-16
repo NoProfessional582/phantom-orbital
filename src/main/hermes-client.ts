@@ -26,7 +26,7 @@ export class HermesClient {
     return pending
   }
   private async createSession() {
-    const created = await (await this.request('/api/sessions', { method: 'POST', body: JSON.stringify({ title: `Hermes Orb voice/text ${randomUUID()}`, source: 'api_server' }) })).json()
+    const created = await (await this.request('/api/sessions', { method: 'POST', body: JSON.stringify({ title: `Phantom Orbital voice/text ${randomUUID()}`, source: 'api_server' }) })).json()
     const id = created.session?.id ?? created.session?.session_id
     if (typeof id !== 'string' || !id) throw new Error('Invalid Hermes session')
     const confirmed = await (await this.request(`/api/sessions/${encodeURIComponent(id)}`)).json()
@@ -43,7 +43,7 @@ export class HermesClient {
   private async request(path: string, init: RequestInit = {}) {
     const response = await this.transport(this.endpoint + path, {
       ...init, redirect: 'error', signal: init.signal ?? AbortSignal.timeout(15_000),
-      headers: { Authorization: `Bearer ${this.key}`, 'X-Hermes-Session-Key': 'hermes-orb-voice', 'Content-Type': 'application/json', ...init.headers }
+      headers: { Authorization: `Bearer ${this.key}`, 'X-Hermes-Session-Key': 'phantom-orbital-voice', 'Content-Type': 'application/json', ...init.headers }
     })
     if (!response.ok) { await response.body?.cancel(); throw new HermesHttpError(response.status) }
     return response

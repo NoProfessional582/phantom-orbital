@@ -13,7 +13,7 @@ test('new app clients create distinct sessions when the old Orb title already ex
   try {
     const legacy = await fetch(mock.endpoint + '/api/sessions', {
       method: 'POST', headers: { Authorization: 'Bearer orb-mock-only', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Hermes Orb voice/text', source: 'api_server' })
+      body: JSON.stringify({ title: 'Phantom Orbital voice/text', source: 'api_server' })
     })
     expect(legacy.status).toBe(201)
     await legacy.body?.cancel()
@@ -45,7 +45,7 @@ test('creates and reads back one session, reuses it for context, and sends expli
     const posts = mock.requests.filter((r: any) => r.path === '/v1/runs')
     expect(posts[0].body.session_id).toBe(posts[1].body.session_id)
     expect(posts[0].headers['idempotency-key']).not.toBe(posts[1].headers['idempotency-key'])
-    expect(posts[0].headers['x-hermes-session-key']).toBe('hermes-orb-voice')
+    expect(posts[0].headers['x-hermes-session-key']).toBe('phantom-orbital-voice')
     expect(posts[0].body).not.toHaveProperty('conversation_history')
   } finally { await mock.close() }
 })

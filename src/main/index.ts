@@ -15,6 +15,7 @@ import { trustedControl, canApproveHotkey } from './approval-controls'
 import type { ChatSnapshot } from '../shared/chat'
 import { validVoiceMode } from '../shared/voice'
 import { ReminderInbox, type Reminder } from './reminders'
+import { migrateLegacyData } from './legacy-data'
 
 const WIDTH = 320, HEIGHT = 400
 const gallery = process.argv.includes('--gallery')
@@ -88,6 +89,7 @@ function chatClient(config: OrbConfig): ConstructorParameters<typeof ChatControl
   return new HermesClient(settings.endpoint, settings.key, fetch, false)
 }
 function create() {
+  if (!uiPreview) try { migrateLegacyData(app.getPath('appData'), app.getPath('userData')) } catch { /* best effort; enrollment can be redone */ }
   let client: ConstructorParameters<typeof ChatController>[0]
   try {
     config = loadConfig(app.getAppPath())
@@ -170,7 +172,7 @@ function create() {
   powerMonitor.on('unlock-screen', () => { locked = false; reminderInbox?.touch(); win?.webContents.send('orb:visible', win?.isVisible() ?? false) })
   if (!gallery && !uiPreview) {
     tray = new Tray(icon())
-    tray.setToolTip('Hermes Orb')
+    tray.setToolTip('Phantom Orbital Assistant')
     tray.setContextMenu(Menu.buildFromTemplate([
       { label: 'Show / hide orb', click: () => win?.isVisible() ? win.hide() : win?.show() },
       { type: 'separator' },

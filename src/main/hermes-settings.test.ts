@@ -50,7 +50,7 @@ test('an endpoint override cannot route a profile to default or another profile'
     mkdirSync(megan, { recursive: true })
     writeFileSync(join(megan, '.env'), 'API_SERVER_KEY=synthetic-megan')
     for (const endpoint of ['http://127.0.0.1:8642', 'http://127.0.0.1:8642/p/default', 'http://127.0.0.1:8642/p/other']) {
-      expect(() => hermesSettings({ profile: 'megan' }, { HERMES_HOME: root, HERMES_ORB_ENDPOINT: endpoint })).toThrow('Hermes endpoint must use loopback HTTP /p/megan')
+      expect(() => hermesSettings({ profile: 'megan' }, { HERMES_HOME: root, ORB_HERMES_ENDPOINT: endpoint })).toThrow('Hermes endpoint must use loopback HTTP /p/megan')
     }
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
@@ -69,5 +69,5 @@ test('missing or empty profile credentials never fall back to a usable default k
 })
 
 test.each(['https://127.0.0.1:8642/p/megan', 'http://example.com/p/megan', 'http://user:password@127.0.0.1:8642/p/megan', 'http://127.0.0.1:8642/p/megan?key=synthetic-only', 'http://127.0.0.1:8642/p/megan#secret', 'not-a-url'])('settings reject unsafe endpoint %s', endpoint => {
-  expect(() => hermesSettings({ profile: 'megan' }, { HERMES_ORB_ENDPOINT: endpoint })).toThrow(/^Hermes endpoint must use loopback HTTP \/p\/megan$/)
+  expect(() => hermesSettings({ profile: 'megan' }, { ORB_HERMES_ENDPOINT: endpoint })).toThrow(/^Hermes endpoint must use loopback HTTP \/p\/megan$/)
 })

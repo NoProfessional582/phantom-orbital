@@ -23,7 +23,7 @@ export function hermesSettings(options: HermesOptions = {}, env: NodeJS.ProcessE
   const keyHome = !profile ? home
     : basename(dirname(home)) === 'profiles' && basename(home) === profile ? home : join(home, 'profiles', profile)
   const route = profile ? `/p/${profile}` : ''
-  const endpoint = env.HERMES_ORB_ENDPOINT || options.endpoint || `http://127.0.0.1:8642${route}`
+  const endpoint = env.ORB_HERMES_ENDPOINT || options.endpoint || `http://127.0.0.1:8642${route}`
   const invalid = `Hermes endpoint must use loopback HTTP${route ? ' ' + route : ''}`
   let url: URL
   try { url = new URL(endpoint) } catch { throw new Error(invalid) }

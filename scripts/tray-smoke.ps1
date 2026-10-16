@@ -11,7 +11,7 @@ public static class TrayWin32 {
 }
 '@
 $process = Get-CimInstance Win32_Process -Filter "name = 'electron.exe'" |
-  Where-Object { $_.CommandLine -match 'hermes-orb.*electron.exe"? \. --state=idle' -and $_.CommandLine -notmatch '--type=' } |
+  Where-Object { $_.CommandLine -match 'phantom-orbital.*electron.exe"? \. --state=idle' -and $_.CommandLine -notmatch '--type=' } |
   Select-Object -First 1
 if (-not $process) { throw 'No running project Electron idle process' }
 $orbPid = $process.ProcessId
@@ -28,7 +28,7 @@ function ByName([string]$name) {
 function Icon {
   $class = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ClassNameProperty, 'TopLevelWindowForOverflowXamlIsland')
   $overflow = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $class)
-  $name = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, ' Hermes Orb')
+  $name = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, ' Phantom Orbital Assistant')
   $icon = if ($overflow) { $overflow.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $name) } else { $null }
   if (-not $icon) {
     $button = ByName 'Show Hidden Icons'
@@ -38,7 +38,7 @@ function Icon {
     $overflow = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $class)
     $icon = if ($overflow) { $overflow.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $name) } else { $null }
   }
-  if (-not $icon) { throw 'Hermes Orb icon not exposed in tray overflow' }
+  if (-not $icon) { throw 'Phantom Orbital icon not exposed in tray overflow' }
   return $icon
 }
 function ClickIcon([bool]$right) {
