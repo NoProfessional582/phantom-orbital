@@ -1,5 +1,7 @@
 # Phantom Orbital Assistant
 
+<p align="center"><img src="docs/phantom-orbital.gif" width="320" alt="Phantom Orbital cycling through idle, listening, thinking and speaking"></p>
+
 Phantom Orbital Assistant is a small floating orb for Windows 11 that you talk to. It is a thin voice and text front end for an AI agent you already run: [Hermes](https://github.com/NousResearch/hermes-agent), OpenClaw, Ollama, LM Studio or any OpenAI-compatible server.
 
 - Type, hold **Ctrl+Shift+Space** to talk, or say a wake phrase ("Hey Megan").
@@ -7,8 +9,6 @@ Phantom Orbital Assistant is a small floating orb for Windows 11 that you talk t
 - After the agent answers aloud, Orbital listens for five seconds so you can follow up without the wake phrase.
 - Only your enrolled voice is accepted (a convenience filter, not security).
 - The personality, name, wake phrase and voice come from a swappable **persona pack**. The included persona is Megan.
-
-![Phantom Orbital idle](docs/screenshots/idle-dark.png)
 
 Orbital keeps the client deliberately thin: your agent owns reasoning, tools and permissions. With Hermes, Orbital shows Hermes's own approval requests as Approve once / Deny cards; it never approves anything by voice.
 
@@ -201,6 +201,8 @@ $env:ORB_TEST_LOCAL_MODELS='1'; sidecar\.venv\Scripts\python.exe -m pytest sidec
 npm run typecheck
 node scripts/mock-hermes.mjs                               # fake Hermes server for manual testing
 ```
+
+To regenerate the README animation, see `scripts/readme-gif/README.md`.
 
 Layout: `src/main` (Electron main: config, harness adapters, voice control), `src/renderer` (orb visuals and controls), `sidecar/` (Python voice process: VAD, Whisper, Piper, speaker check, wake word), `personas/`, `scripts/`.
 
