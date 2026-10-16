@@ -1,0 +1,10 @@
+// Local-only CDP test: simulate queued renderer hover hints after cursor exits.
+const pages = await (await fetch('http://127.0.0.1:9333/json')).json()
+const page = pages.find(p => p.type === 'page' && p.url.includes('index.html'))
+if (!page) throw new Error('Native renderer target missing')
+const ws = new WebSocket(page.webSocketDebuggerUrl)
+await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject })
+ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'window.__hintProbe=setInterval(()=>window.orb.hit(true),1);setTimeout(()=>clearInterval(window.__hintProbe),1500)' } }))
+await new Promise(resolve => { ws.onmessage = e => { if (JSON.parse(e.data).id === 1) resolve() } })
+console.log('armed')
+ws.close()

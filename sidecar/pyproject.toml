@@ -1,0 +1,22 @@
+[project]
+name = "hermes-orb-voice"
+version = "0.1.0"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "faster-whisper==1.2.1",
+  "ctranslate2==4.8.1",
+  "piper-tts==1.8.0",
+  "onnxruntime==1.29.0",
+  "sounddevice>=0.5,<0.6",
+  "sherpa-onnx==1.13.8",
+  "sherpa-onnx-core==1.13.8",
+  "sentencepiece==0.2.1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pip-audit>=2,<3"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

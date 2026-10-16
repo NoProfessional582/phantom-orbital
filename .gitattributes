@@ -1,0 +1,3 @@
+# Deterministic project text; never normalize preserved source artifacts.
+* text=auto eol=lf
+*.png binary

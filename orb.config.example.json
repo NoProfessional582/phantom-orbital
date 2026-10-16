@@ -1,0 +1,39 @@
+{
+  "persona": "personas/megan",
+  "user": { "name": "Alex" },
+  "harness": {
+    "type": "hermes",
+    "profile": "megan"
+  },
+  "_examples": {
+    "hermes": {
+      "type": "hermes",
+      "profile": "megan",
+      "home": "C:\\Users\\you\\AppData\\Local\\hermes",
+      "endpoint": "http://127.0.0.1:8642/p/megan"
+    },
+    "openclaw": {
+      "type": "openai",
+      "endpoint": "http://127.0.0.1:18789/v1",
+      "model": "openclaw",
+      "apiKeyEnv": "OPENCLAW_GATEWAY_TOKEN",
+      "sendPersonality": false
+    },
+    "ollama": {
+      "type": "openai",
+      "endpoint": "http://127.0.0.1:11434/v1",
+      "model": "llama3.1"
+    },
+    "lm-studio": {
+      "type": "openai",
+      "endpoint": "http://127.0.0.1:1234/v1",
+      "model": "your-loaded-model"
+    },
+    "hosted": {
+      "type": "openai",
+      "endpoint": "https://api.openai.com/v1",
+      "model": "gpt-4o-mini",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    }
+  }
+}

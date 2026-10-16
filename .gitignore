@@ -1,0 +1,42 @@
+# Dependency/build output
+node_modules/
+.tools/
+sidecar/models/
+.venv/
+venv/
+dist/
+out/
+release/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+# Credentials and private voice data (never commit)
+.env
+.env.*
+!.env.example
+.private/
+voice-profiles/
+**/voice-profile*.json
+**/registered.embedding.json
+*.pending
+enrollment/
+recordings/
+*.wav
+*.flac
+*.mp3
+*.ogg
+*.pcm
+*.onnx
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+*.embedding
+*.dmp
+logs/
+.cache/
+
+# Local Orb settings (persona choice, user name, AI harness)
+orb.config.json
+sidecar/models/wake/keyword.txt
+.orchestra/
