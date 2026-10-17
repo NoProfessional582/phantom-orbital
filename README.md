@@ -37,6 +37,7 @@ npm start
 - `setup-sidecar.ps1` installs `uv`, Python 3.12 and the voice packages **inside the project folder** (`.tools/`, `sidecar/.venv`). It does not touch your system Python, PATH or registry.
 - `setup-models.ps1 -Download` downloads the models once (Whisper large-v3-turbo, the persona's Piper voice, the speaker model and the wake-word model). Downloads are pinned to official sources, and the speaker and wake models are checked by SHA256. After this, Orbital runs fully offline and refuses to download anything at runtime. Re-run it whenever you switch to a persona with a different voice.
 - `npm run dev` runs with hot reload instead of `npm start`.
+- To start Orbital without a terminal, run `powershell -ExecutionPolicy Bypass -File scripts/launch.ps1 -Shortcut` once. It puts a **Phantom Orbital** shortcut on your desktop that rebuilds if the source changed (when `npm` is on `PATH`) and then starts the app.
 
 Orbital appears in the lower-right corner. Drag it anywhere; it remembers the spot. The tray icon shows or hides it.
 
