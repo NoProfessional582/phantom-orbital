@@ -8,6 +8,13 @@ import threading
 import numpy as np
 import pytest
 
+DELAY = .3
+
+
+@pytest.fixture(autouse=True)
+def short_filler_delay(monkeypatch):
+    monkeypatch.setattr(Engine, 'filler_delay', DELAY)
+
 
 @pytest.mark.parametrize('source', ['wake', 'followup'])
 def test_handsfree_capture_plays_feedback_before_blocked_verification(source):
@@ -94,7 +101,29 @@ def engine():
     return Engine(models, audio, events.append, AcceptedFilter()), models, audio, events
 
 
-def test_filler_waits_one_second_after_capture_without_blocking_transcription():
+def test_default_filler_delay_is_five_seconds():
+    from engine import FILLER_DELAY
+    assert FILLER_DELAY == 5.0
+
+
+def test_reply_arriving_during_the_delay_skips_the_filler():
+    async def run():
+        e, _, audio, events = engine()
+        await e.command({'type': 'voice-mode', 'mode': 'voice', 'revision': 1})
+        await e.filler_prewarm
+        await e.command({'type': 'start'})
+        await e.command({'type': 'release'})
+        from test_wake_engine import settle
+        await settle(lambda: any(x['type'] == 'transcript' for x in events))
+        await e.command({'type': 'speech-begin', 'stream': 'reply'})
+        await e.command({'type': 'speech-append', 'stream': 'reply', 'seq': 0, 'text': 'Answer.'})
+        await e.command({'type': 'speech-finish', 'stream': 'reply'})
+        await e.wait()
+        assert len(audio.played) == 1, 'only the reply plays'
+    asyncio.run(run())
+
+
+def test_filler_waits_after_capture_without_blocking_transcription():
     async def run():
         e, _, audio, events = engine()
         await e.command({'type': 'voice-mode', 'mode': 'voice', 'revision': 1})
@@ -108,7 +137,7 @@ def test_filler_waits_one_second_after_capture_without_blocking_transcription():
             assert any(x['type'] == 'transcript' for x in events), 'STT must continue during the delay'
             await e.wait()
             assert len(audio.played) == 1
-            assert asyncio.get_running_loop().time() - started >= 1.0
+            assert asyncio.get_running_loop().time() - started >= DELAY - .05  # Windows timer granularity
         finally:
             e.cancel()
             await e.wait()

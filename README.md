@@ -122,7 +122,7 @@ personas/megan/
   "name": "Megan",
   "wakePhrase": "Hey Megan",
   "voice": { "model": "en_US-amy-medium", "lengthScale": 0.7, "noiseScale": 0.5, "noiseW": 0.8, "volume": 0.65 },
-  "fillers": ["Let me think about that.", "One moment. Genius takes a second."],
+  "fillers": ["One moment.", "On it. Genius takes a second."],
   "progress": ["This is taking longer than I anticipated. I'm still on it."]
 }
 ```
@@ -135,7 +135,7 @@ personas/megan/
 | `voice.lengthScale` | Speaking speed: below 1 is faster, above 1 slower (Megan uses 0.7). |
 | `voice.noiseScale`, `voice.noiseW` | Expressiveness and timing variation (0–1.5). |
 | `voice.volume` | Output volume, from 0.05 to 1. |
-| `fillers` | Short lines spoken while the agent is thinking (up to 40, each at most 80 characters). Use `[]` for none. |
+| `fillers` | Short lines spoken while the agent is thinking (up to 40, each at most 80 characters). They play before the request is understood, so word them to fit both questions and commands. Use `[]` for none. |
 | `progress` | Lines spoken when a spoken request has had no reply text for 45 seconds, then every 2 minutes (same limits). Typed requests show the `messages.stillWorking` caption instead. |
 | `messages` | The persona's own wording for Orbital's built-in lines, each one line of at most 160 characters, with `{{name}}` and `{{user}}` filled in: `stillWorking` (caption during a long wait), `backgroundDone` (title of a background-task result card) and `voicePreview` (spoken when you right-click Voice). Missing entries use plain defaults. Error and safety notices stay plain on purpose. |
 

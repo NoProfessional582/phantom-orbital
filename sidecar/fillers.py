@@ -1,21 +1,23 @@
 """Short local Amy lines that fill the silence while Hermes is thinking.
 
 Edit freely: keep them short (about a second at Amy's rate) and free of the
-user's name. They are synthesized locally and cached in memory only.
+user's name. They play before the request is understood, so each must fit a
+question and a command alike ("Checking" or "Good question" would not).
+They are synthesized locally and cached in memory only.
 """
 PHRASES = (
     'One moment. Genius takes a second.',
-    'Checking. Try not to hover.',
+    'Give me a moment. Try not to hover.',
     "On it. Don't touch anything.",
     'Thinking, which makes one of us.',
     'Processing. Patience is a virtue, apparently.',
     'Working on it. Do try to stay calm.',
-    'Interesting question. Relatively speaking.',
-    "Calculating. This won't take long.",
-    "Let me think. Quietly, if you don't mind.",
-    'Looking into it. Contain your excitement.',
-    'Hold that thought. Carefully.',
-    'Checking. Someone has to.',
+    'Understood. Brace yourself for competence.',
+    "Got it. This won't take long.",
+    "One second. Quietly, if you don't mind.",
+    'Handling it. Contain your excitement.',
+    'Right away. Well, nearly.',
+    'Leave it with me. Someone has to.',
 )
 
 # Spoken when a reply has gone quiet for a while (main decides when).

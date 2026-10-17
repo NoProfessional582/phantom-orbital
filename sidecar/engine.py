@@ -10,9 +10,12 @@ from persona import Persona, strip_wake
 
 SPEECH_FRAME_BYTES = 16384
 SPEECH_CHUNK_CHARACTERS = 400
+FILLER_DELAY = 5.0  # seconds after capture ends before a thinking line; a reply arriving first skips it
 
 
 class Engine:
+    filler_delay = FILLER_DELAY
+
     def __init__(self, models, audio, emit, speaker=None, wake_factory=None, persona=None):
         self.models, self.audio = models, audio
         self.persona = persona or Persona()
@@ -42,10 +45,13 @@ class Engine:
         self.progress_cache = {}
         self.filler_last = None
         self.filler_prewarm = None
+        self.filler_waiting = None
 
     def cancel(self, preserve_activation=False):
         self.followup = None
         self.activation = self.activation and preserve_activation
+        if self.filler_waiting:
+            self.filler_waiting.set()  # a reply or stop before the delay ends skips the thinking line
         self.wake_queue = None
         if not preserve_activation:
             self.awaiting_response = False  # the loaded wake detector is kept and reset on the next arm
@@ -476,11 +482,18 @@ class Engine:
         self.filler_stop = threading.Event()
         self.launch(self.speak_filler(self.filler_cache[text], self.filler_stop))
 
-    async def speak_filler(self, audio, stop, delay=1.0):
-        """Delay cached feedback one second; transcription runs independently."""
+    async def speak_filler(self, audio, stop, delay=None):
+        """Delay cached feedback; transcription runs independently and an earlier reply skips it."""
+        delay = self.filler_delay if delay is None else delay
         try:
+            if delay:
+                self.filler_waiting = stop
+                try:
+                    await asyncio.to_thread(stop.wait, delay)
+                finally:
+                    if self.filler_waiting is stop:
+                        self.filler_waiting = None
             async with self.playback:
-                await asyncio.sleep(delay)
                 if not stop.is_set():
                     pcm, rate = audio
                     await asyncio.to_thread(self.audio.play, pcm, rate, stop, lambda value: None)
