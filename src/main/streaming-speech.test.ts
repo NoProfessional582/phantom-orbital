@@ -169,11 +169,18 @@ test('nested formatting never exposes code or URLs inside emphasis/link labels',
   expect(chunks.join(' ')).toBe('Hello guide. Next safe sentence.')
 })
 
-test.each(['`secret. ', '```js\nsecret. ', '[secret. ', '![secret.](https://hidden.', 'https://hidden.test/secret.', '**unfinished.'])('unfinished %s is held and omitted even at final completion', suffix => {
+test.each(['```js\nsecret. ', '![secret.](https://hidden.', 'https://hidden.test/secret.', '(https://hidden.test/secret.'])('unfinished %s is held and omitted even at final completion', suffix => {
   const buffer = new SentenceBuffer()
   const chunks = buffer.update('Safe sentence. ' + suffix)
   chunks.push(...buffer.update('Safe sentence. ' + suffix, true))
   expect(chunks).toEqual(['Safe sentence.'])
+})
+
+test.each(['`stray. ', '[stray. ', '**stray.'])('a stray %s marker is skipped and its prose spoken at completion', suffix => {
+  const buffer = new SentenceBuffer()
+  const chunks = buffer.update('Safe sentence. ' + suffix)
+  chunks.push(...buffer.update('Safe sentence. ' + suffix, true))
+  expect(chunks).toEqual(['Safe sentence.', 'stray.'])
 })
 
 test('voice-origin completed sentence is appended while backend completion remains gated', async () => {

@@ -12,7 +12,7 @@ export class SidecarClient {
   private restarts = 0
   private restarting?: Promise<void>
   get pid() { return this.child?.pid }
-  constructor(private root: string, private receive: (message: Record<string, unknown>) => void, private disconnected: () => void, private synthetic = false, private profilePath?: string, private persona?: { wakePhrase: string; voice: object; fillers: string[] }) {}
+  constructor(private root: string, private receive: (message: Record<string, unknown>) => void, private disconnected: () => void, private synthetic = false, private profilePath?: string, private persona?: { wakePhrase: string; voice: object; fillers: string[]; progress: string[]; speakerFilter: boolean }) {}
   start(): Promise<void> {
     if (this.child) return Promise.reject(new Error('Local sidecar already started'))
     this.closing = false
@@ -89,7 +89,8 @@ export class SidecarClient {
     if (this.restarting) return this.restarting
     if (this.restarts >= 2) return Promise.reject(new Error('Local voice restart limit reached; restart Orb after checking models.'))
     this.restarts++
-    const restarting = this.restarting = this.close().then(() => this.start())
+    // The limit counts failed attempts in a row; a restart that comes up resets it.
+    const restarting = this.restarting = this.close().then(() => this.start()).then(() => { this.restarts = 0 })
     void restarting.finally(() => { this.restarting = undefined }).catch(() => {})
     return restarting
   }

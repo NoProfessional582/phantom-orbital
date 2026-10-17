@@ -24,6 +24,7 @@ export interface VoiceSnapshot {
   hotkeyAvailable: boolean
   muteShortcutAvailable: boolean
   registered?: boolean
+  speakerFilter?: boolean
   speechActive?: boolean
   followupActive?: boolean
   enrolling?: boolean

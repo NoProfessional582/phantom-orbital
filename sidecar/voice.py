@@ -67,8 +67,9 @@ class LocalModels:
                                      min_silence_duration_ms=300, speech_pad_ms=100))
         return np.concatenate([audio[s['start']:s['end']] for s in spans]) if spans else np.empty(0, dtype=np.float32)
 
-    def transcribe(self, audio):
-        trimmed = self.trim(audio)
+    def transcribe(self, audio, trimmed=False):
+        """Local Whisper text. Pass trimmed=True when the audio is already VAD-trimmed."""
+        trimmed = audio if trimmed else self.trim(audio)
         if not len(trimmed):
             return ''
         if self.whisper is None:

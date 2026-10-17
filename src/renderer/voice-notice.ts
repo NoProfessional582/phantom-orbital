@@ -1,5 +1,6 @@
 const ROUTINE_VOICE_NOTICES = new Set([
   'Voice filter ready.',
+  'Speaker filter off.',
   'Preparing local wake listener…',
   'Capturing command…',
   'Verifying voice / transcribing locally…',

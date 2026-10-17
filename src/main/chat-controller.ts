@@ -1,6 +1,7 @@
 import type { ChatSnapshot } from '../shared/chat'
 import { randomUUID } from 'node:crypto'
 import { EventRecoveryGap, RunStartUncertain, type HermesClient } from './hermes-client'
+export const PROGRESS_NOTICE = 'Still working on it…'
 export class ChatController {
   snapshot: ChatSnapshot = { state: 'idle', user: '', answer: '', notice: '', busy: false, stopping: false, inputOpen: false }
   private run?: string
@@ -16,6 +17,18 @@ export class ChatController {
   private speechText = ''
   private speechId = ''
   private speechInterim = false
+  /** After this long with no new reply text, say so; then again every progressEveryMs. */
+  progressAfterMs = 45_000
+  progressEveryMs = 120_000
+  /** The caption for a long quiet wait (the persona's own words). */
+  progressNotice = PROGRESS_NOTICE
+  private progressTimer?: ReturnType<typeof setTimeout>
+  private lastReplyAt = 0
+  private delegations = 0
+  /** A long quiet wait; the origin decides whether it is also spoken. */
+  onProgress?: (origin: 'text' | 'voice') => void
+  /** A run finished; delegations counts the sub-agents it started (results may arrive later). */
+  onCompleted?: (run: { output: string; delegations: number }) => void
   constructor(private client: Pick<HermesClient, 'start' | 'events' | 'stop'> & Partial<Pick<HermesClient, 'status' | 'approval' | 'resetSession' | 'prepareSession'>>, private changed: (snapshot: ChatSnapshot) => void) {}
   /** Warm the Hermes session while the user is still speaking/typing; failures surface on submit. */
   prepare() { if (!this.snapshot.busy) this.client.prepareSession?.().catch(() => {}) }
@@ -43,14 +56,31 @@ export class ChatController {
     this.approvalTimer = undefined
     this.approval = undefined
   }
-  private finish(status: string, output?: unknown) {
+  private scheduleProgress(generation: number, delay: number) {
+    clearTimeout(this.progressTimer)
+    this.progressTimer = setTimeout(() => {
+      if (generation !== this.generation || !this.snapshot.busy) return
+      const quiet = Date.now() - this.lastReplyAt
+      if (quiet < this.progressAfterMs) return this.scheduleProgress(generation, this.progressAfterMs - quiet)
+      // An approval card or Stop already tells the user what is happening.
+      if (!this.snapshot.approval && !this.snapshot.stopping) {
+        this.publish({ notice: this.progressNotice })
+        this.onProgress?.(this.snapshot.inputOrigin ?? 'text')
+      }
+      this.scheduleProgress(generation, this.progressEveryMs)
+    }, delay)
+    this.progressTimer.unref?.()
+  }
+  private finish(status: string, output?: unknown, notice?: string) {
+    clearTimeout(this.progressTimer)
     this.generation++
     this.streamAbort?.abort()
     this.clearApproval()
     this.run = undefined
     this.publish({ speech: { id: this.speechId, text: typeof output === 'string' ? output : this.speechText, phase: status === 'completed' ? 'complete' : 'failed' }, approval: undefined, busy: false, stopping: false, state: ['completed', 'cancelled'].includes(status) ? 'idle' : 'offline',
-      notice: status === 'completed' ? '' : status === 'cancelled' ? 'Stopped.' : `Run ${status}.`,
+      notice: status === 'completed' ? '' : status === 'cancelled' ? 'Stopped.' : notice || `Run ${status}.`,
       answer: status === 'completed' && typeof output === 'string' ? output.slice(0, 100_000) : this.snapshot.answer })
+    if (status === 'completed') this.onCompleted?.({ output: typeof output === 'string' ? output : this.snapshot.answer, delegations: this.delegations })
     this.finishReset()
   }
   expireApproval(id: string) {
@@ -84,6 +114,9 @@ export class ChatController {
     this.settledApprovals.clear()
     this.approvalDisarmed = false
     this.activeTools = 0
+    this.delegations = 0
+    this.lastReplyAt = Date.now()
+    this.scheduleProgress(generation, this.progressAfterMs)
     try {
       this.run = await this.client.start(text.trim())
       // Start the confirmation stream while Stop/readback are in flight. A
@@ -122,6 +155,7 @@ export class ChatController {
             }
             break
           case 'tool.started': case 'subagent.start':
+            if (data.event === 'tool.started' && data.tool === 'delegate_task') this.delegations++
             this.activeTools++
             this.publish({ state: 'working', notice: this.snapshot.stopping ? this.snapshot.notice : 'Using tools…' }); break
           case 'tool.completed': case 'subagent.complete':
@@ -129,7 +163,8 @@ export class ChatController {
             this.publish({ state: this.activeTools ? 'working' : 'thinking', notice: this.snapshot.stopping ? this.snapshot.notice : this.activeTools ? 'Using tools…' : '' }); break
           case 'message.delta': if (typeof data.delta === 'string') {
             this.speechText = (this.speechText + data.delta).slice(0, 100_001)
-            this.publish({ speech: { id: this.speechId, text: this.speechText.slice(0, 100_001), phase: this.speechInterim ? 'interim' : 'stream' }, answer: (this.snapshot.answer + data.delta).slice(0, 100_000) })
+            this.lastReplyAt = Date.now()
+            this.publish({ speech: { id: this.speechId, text: this.speechText.slice(0, 100_001), phase: this.speechInterim ? 'interim' : 'stream' }, answer: (this.snapshot.answer + data.delta).slice(0, 100_000), ...(this.snapshot.notice === this.progressNotice ? { notice: '' } : {}) })
           }; break
           case 'message.interim': this.publish(typeof data.text === 'string' && !data.already_streamed ? { answer: data.text.slice(0, 100_000) } : {}); break
           case 'run.completed':
@@ -139,12 +174,14 @@ export class ChatController {
             this.finish('cancelled')
             return
           case 'run.failed': case 'run.interrupted':
-            this.finish(data.event === 'run.failed' ? 'failed' : 'interrupted')
+            // orb_notice comes only from Orb's own OpenAI adapter, never from Hermes.
+            this.finish(data.event === 'run.failed' ? 'failed' : 'interrupted', undefined, typeof data.orb_notice === 'string' ? data.orb_notice.slice(0, 300) : undefined)
             return
         }
       }
     } catch (error) {
       if (generation !== this.generation) return
+      clearTimeout(this.progressTimer)
       this.clearApproval()
       this.publish({ approval: undefined })
       const uncertain = error instanceof RunStartUncertain

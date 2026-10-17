@@ -58,10 +58,21 @@ def test_configured_phrase_is_spelled_with_pinned_vocabulary():
             keyword(WAKE_MODELS, bad)
 
 
-def test_wake_prefix_strips_configured_phrase_only_at_start():
-    from persona import wake_prefix
-    prefix = wake_prefix('Hey Nova')
-    text = 'Hey, Nova. What time is it?'
-    assert text[prefix.match(text).end():] == 'What time is it?'
-    assert prefix.match('Hey Megan, what time is it?') is None
-    assert wake_prefix("Okay O'Brien").match("okay o'brien, lights")
+def test_strip_wake_returns_the_command_after_the_configured_phrase():
+    from persona import strip_wake
+    assert strip_wake('Hey Nova', 'Hey, Nova. What time is it?') == 'What time is it?'
+    assert strip_wake('Hey Nova', 'Hey Megan, what time is it?') == ''
+    assert strip_wake("Okay O'Brien", "okay o'brien, lights") == 'lights'
+
+
+def test_strip_wake_tolerates_whisper_spellings_and_earlier_speech():
+    from persona import strip_wake
+    for heard in ('Hey, Meghan, what time is it?', 'Hey Meagan. What time is it?', 'Hi Megan, what time is it?',
+                  'So anyway. Hey Megan, what time is it?', 'Hey Megyn what time is it?'):
+        assert strip_wake('Hey Megan', heard).lower() == 'what time is it?', heard
+    # The name appearing later in a command is kept; only the first wake phrase is removed.
+    assert strip_wake('Hey Megan', 'Hey Megan, remind Megan to call') == 'remind Megan to call'
+    # Similar words that start differently, or no wake phrase at all, are not a command.
+    assert strip_wake('Hey Megan', 'I began to say what time is it') == ''
+    assert strip_wake('Hey Megan', 'what time is it') == ''
+    assert strip_wake('Hey Megan', 'Hey Megan') == ''

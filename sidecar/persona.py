@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import json
 import os
 import re
-from fillers import PHRASES
+from fillers import PHRASES, PROGRESS
 
 DEFAULT_WAKE_PHRASE = 'Hey Megan'
 VOICE_ID = re.compile(r'^[a-z]{2,3}_[A-Z]{2}-[a-z0-9_]+-(?:x_low|low|medium|high)$')
@@ -28,6 +28,9 @@ class Persona:
     wake_phrase: str = DEFAULT_WAKE_PHRASE
     voice: Voice = field(default_factory=Voice)
     fillers: tuple = PHRASES
+    progress: tuple = PROGRESS
+    # Main always sends the configured value; the bare default keeps the filter on.
+    speaker_filter: bool = True
 
 
 def _number(raw, key, low, high, default):
@@ -52,18 +55,59 @@ def parse(text):
                   _number(v, 'noiseScale', 0, 1.5, Voice.noise_scale),
                   _number(v, 'noiseW', 0, 1.5, Voice.noise_w),
                   _number(v, 'volume', .05, 1, Voice.volume))
-    fillers = raw.get('fillers', list(PHRASES))
-    if (not isinstance(fillers, list) or len(fillers) > 40
-            or any(not isinstance(line, str) or not line.strip() or len(line) > 80 for line in fillers)):
-        raise ValueError('persona fillers invalid')
-    return Persona(phrase, voice, tuple(line.strip() for line in fillers))
+    fillers, progress = raw.get('fillers', list(PHRASES)), raw.get('progress', list(PROGRESS))
+    for lines in (fillers, progress):
+        if (not isinstance(lines, list) or len(lines) > 40
+                or any(not isinstance(line, str) or not line.strip() or len(line) > 80 for line in lines)):
+            raise ValueError('persona fillers/progress invalid')
+    speaker_filter = raw.get('speakerFilter', True)
+    if not isinstance(speaker_filter, bool):
+        raise ValueError('persona speakerFilter invalid')
+    return Persona(phrase, voice, tuple(line.strip() for line in fillers),
+                   tuple(line.strip() for line in progress), speaker_filter)
 
 
 def from_env():
     return parse(os.environ.get('ORB_PERSONA', ''))
 
 
-def wake_prefix(phrase):
-    """Regex for the wake phrase at the start of a transcript, tolerant of Whisper punctuation."""
-    words = re.split(r"[ '-]+", phrase.strip())
-    return re.compile(r'^\s*' + r"[\s,'-]*".join(re.escape(w) for w in words) + r'\b[\s,.:;!?—-]*', re.IGNORECASE)
+# The keyword spotter has already heard the phrase; this only finds where it
+# sits in Whisper's text. The 3 s pre-roll can put earlier words in front of it.
+WAKE_SEARCH_WORDS = 15
+
+
+def _sound(word):
+    """Rough spelling key so Whisper variants agree: Meghan/Megan, Phil/Fil."""
+    word = word.lower().replace('ph', 'f')
+    word = re.sub(r'(?<=[^aeiou])h', '', word)
+    return re.sub(r'(.)\1+', r'\1', word)
+
+
+def _close(heard, wanted):
+    a, b = _sound(heard), _sound(wanted)
+    if a == b:
+        return True
+    # One edit on longer words (Meagan, Megyn), keeping the first letter (not "began").
+    if min(len(a), len(b)) < 4 or a[0] != b[0] or abs(len(a) - len(b)) > 1:
+        return False
+    row = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        prev, row[0] = row[0], i
+        for j, y in enumerate(b, 1):
+            prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (x != y))
+    return row[-1] <= 1
+
+
+def strip_wake(phrase, text):
+    """The command after the wake phrase, or '' when the phrase isn't found near the start.
+
+    Tries the whole phrase first, then the last word alone ("Hi Megan" for "Hey Megan").
+    """
+    wanted = re.findall(r'[A-Za-z]+', phrase)
+    words = list(re.finditer(r'[A-Za-z]+', text))[:WAKE_SEARCH_WORDS]
+    for target in (wanted, wanted[-1:]):
+        for start in range(len(words) - len(target) + 1):
+            if all(_close(words[start + k].group(), w) for k, w in enumerate(target)):
+                rest = text[words[start + len(target) - 1].end():]
+                return re.sub(r'^[\s,.:;!?—-]+', '', rest).strip()
+    return ''

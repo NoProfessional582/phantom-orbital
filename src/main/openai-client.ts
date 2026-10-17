@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { RunStartUncertain } from './hermes-client'
 import type { SseEvent } from './sse'
 
 // Generic adapter for any OpenAI-compatible /chat/completions server (OpenClaw's
@@ -10,6 +9,8 @@ import type { SseEvent } from './sse'
 type Message = { role: 'system' | 'user' | 'assistant'; content: string }
 type Run = { text: string; abort: AbortController; status: 'running' | 'completed' | 'cancelled' | 'failed'; output: string }
 const MAX_HISTORY = 40
+// Finished runs are kept only so Stop/Check run can still read their status.
+const MAX_RUNS = 10
 
 export function validOpenAiEndpoint(endpoint: string): URL {
   let url: URL
@@ -33,6 +34,7 @@ export class OpenAiClient {
   async start(text: string): Promise<string> {
     const id = randomUUID()
     this.runs.set(id, { text, abort: new AbortController(), status: 'running', output: '' })
+    for (const old of this.runs.keys()) if (this.runs.size > MAX_RUNS) this.runs.delete(old)
     return id
   }
   async *events(id: string, signal?: AbortSignal): AsyncGenerator<SseEvent> {
@@ -50,12 +52,15 @@ export class OpenAiClient {
     } catch (error) {
       if (run.abort.signal.aborted) { run.status = 'cancelled'; yield { data: { event: 'run.cancelled', run_id: id } }; return }
       if (signal?.aborted) throw error
-      throw new RunStartUncertain('Chat server unreachable')
+      // Nothing was accepted, so this is a plain failure, not an uncertain run.
+      run.status = 'failed'
+      yield { data: { event: 'run.failed', run_id: id, orb_notice: 'AI server unreachable. Check that it is running and matches orb.config.json.' } }
+      return
     }
     if (!response.ok || !response.body) {
       await response.body?.cancel()
       run.status = 'failed'
-      yield { data: { event: 'run.failed', run_id: id, error: `HTTP ${response.status}` } }
+      yield { data: { event: 'run.failed', run_id: id, orb_notice: `AI server refused the request (HTTP ${response.status}). Check the endpoint, model and API key in orb.config.json.` } }
       return
     }
     try {
@@ -68,7 +73,7 @@ export class OpenAiClient {
       if (run.abort.signal.aborted) { run.status = 'cancelled'; yield { data: { event: 'run.cancelled', run_id: id } }; return }
       if (signal?.aborted) throw error
       run.status = 'failed'
-      yield { data: { event: 'run.failed', run_id: id } }
+      yield { data: { event: 'run.failed', run_id: id, orb_notice: 'AI server stopped responding mid-reply.' } }
       return
     }
     run.status = 'completed'

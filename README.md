@@ -7,7 +7,7 @@ Phantom Orbital Assistant is a small floating orb for Windows 11 that you talk t
 - Type, hold **Ctrl+Shift+Space** to talk, or say a wake phrase ("Hey Megan").
 - Speech recognition, wake word, speaker check and the spoken reply all run **locally**. Audio never leaves your PC; only the final transcript text goes to your agent.
 - After the agent answers aloud, Orbital listens for five seconds so you can follow up without the wake phrase.
-- Only your enrolled voice is accepted (a convenience filter, not security).
+- Optional speaker filter: with `speakerFilter` on, only your enrolled voice is accepted (a convenience filter, not security). It is off by default.
 - The personality, name, wake phrase and voice come from a swappable **persona pack**. The included persona is Megan.
 
 Orbital keeps the client deliberately thin: your agent owns reasoning, tools and permissions. With Hermes, Orbital shows Hermes's own approval requests as Approve once / Deny cards; it never approves anything by voice.
@@ -43,7 +43,7 @@ Orbital appears in the lower-right corner. Drag it anywhere; it remembers the sp
 ### First use
 
 1. Click **Voice** to cycle the voice mode: **Off → PTT** (push-to-talk plus spoken replies) **→ Voice** (also listens for the wake phrase) **→ Off**. Voice is always Off at startup.
-2. Open **Settings → Enroll voice** and read six different short sentences (2–8 seconds each) in a quiet room, holding Ctrl+Shift+Space for each one. Only a numeric voice "fingerprint" is saved, in `%APPDATA%/phantom-orbital/voice-profiles/`; the audio is discarded.
+2. Optional, only if you turn on `speakerFilter`: open **Settings → Enroll voice** and read six different short sentences (2–8 seconds each) in a quiet room, holding Ctrl+Shift+Space for each one. Only a numeric voice "fingerprint" is saved, in `%APPDATA%/phantom-orbital/voice-profiles/`; the audio is discarded.
 3. Hold **Ctrl+Shift+Space**, speak, release. Or switch to **Voice** mode and say "Hey Megan, what's on my calendar?"
 4. **Ctrl+Alt+M** turns voice off immediately from anywhere.
 
@@ -66,6 +66,7 @@ In Text mode, Ctrl+Shift+Space opens the text box instead.
 | `persona` | Folder of the persona pack to use (relative to the project, or absolute). |
 | `user.name` | Your name. It fills `{{user}}` in the personality and labels your messages. |
 | `harness` | Which AI backend Orbital talks to. |
+| `speakerFilter` | `true` to accept voice input only from your enrolled voice. Default `false`: any voice is transcribed. |
 
 Restart Orbital after editing. If something in the file is invalid, Orbital starts anyway and shows the problem in its caption.
 
@@ -120,7 +121,8 @@ personas/megan/
   "name": "Megan",
   "wakePhrase": "Hey Megan",
   "voice": { "model": "en_US-amy-medium", "lengthScale": 0.7, "noiseScale": 0.5, "noiseW": 0.8, "volume": 0.65 },
-  "fillers": ["Let me think about that.", "One moment. Genius takes a second."]
+  "fillers": ["Let me think about that.", "One moment. Genius takes a second."],
+  "progress": ["This is taking longer than I anticipated. I'm still on it."]
 }
 ```
 
@@ -133,10 +135,12 @@ personas/megan/
 | `voice.noiseScale`, `voice.noiseW` | Expressiveness and timing variation (0–1.5). |
 | `voice.volume` | Output volume, from 0.05 to 1. |
 | `fillers` | Short lines spoken while the agent is thinking (up to 40, each at most 80 characters). Use `[]` for none. |
+| `progress` | Lines spoken when a spoken request has had no reply text for 45 seconds, then every 2 minutes (same limits). Typed requests show the `messages.stillWorking` caption instead. |
+| `messages` | The persona's own wording for Orbital's built-in lines, each one line of at most 160 characters, with `{{name}}` and `{{user}}` filled in: `stillWorking` (caption during a long wait), `backgroundDone` (title of a background-task result card) and `voicePreview` (spoken when you right-click Voice). Missing entries use plain defaults. Error and safety notices stay plain on purpose. |
 
 ### `personality.md`
 
-Plain text describing who the assistant is. `{{name}}` and `{{user}}` are filled in for you. Orbital speaks replies aloud, so tell the assistant to answer in plain sentences without Markdown, lists or emojis. Megan's file shows one way to say it.
+Plain text describing who the assistant is. `{{name}}` and `{{user}}` are filled in for you. Orbital speaks replies aloud, so tell the assistant to answer in plain sentences without Markdown, lists or emojis, and to spell out units, abbreviations and symbols ("degrees Fahrenheit", not "°F"). If your agent can run background sub-agents, tell it to hand off long jobs; see [Background tasks](#background-tasks-hermes). Megan's file shows one way to say all of this.
 
 - **Hermes:** Hermes reads the personality from the profile's `SOUL.md`, not from Orbital. Print the filled-in text with:
 
@@ -172,8 +176,12 @@ It prints the token spelling, or an error if the phrase can't be used.
 
 - **Good phrases** are two or three words and 3–5 syllables in total, and don't sound like everyday speech ("Hey Nova", "OK Juniper").
 - **Single words** are rejected. Very common phrases ("Hey you") trigger falsely.
-- Orbital removes the wake phrase from the start of what you said before sending it, so your agent only sees the command.
+- Orbital removes the wake phrase, and anything said just before it, so your agent only sees the command. Common spelling variants (for example "Meghan" for "Megan") still match.
 - Test your phrase in a few rooms and voices. This is a light model, and detection varies.
+
+## Background tasks (Hermes)
+
+If Hermes hands a long job to a background sub-agent (`delegate_task`), the run ends right away. Orbital then checks that Hermes session every 30 seconds, for up to 2 hours, and shows the sub-agent's result as a card with a chime, even if the orb was hidden. To make your agent delegate long jobs, add an instruction to its profile (for Hermes, its `SOUL.md`).
 
 ## Reminders (optional)
 
@@ -189,7 +197,7 @@ Orbital shows it with a chime and a **Got it** button. If the heartbeat is stale
 
 - Microphone audio, voice profiles, transcription and speech synthesis stay on your PC. There is no cloud speech service and no fallback to one.
 - The agent's API key stays in Electron's main process. It is never sent to the user interface, the voice process, logs or URLs.
-- The speaker match is a convenience filter. It is not authentication. Don't let it guard anything important.
+- The speaker filter is off by default, so anyone near the microphone can talk to your agent. Turned on, it is a convenience filter, not authentication. Don't let it guard anything important.
 - Only enroll your own voice. Record other people only with their consent.
 
 ## Development

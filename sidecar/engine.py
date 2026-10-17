@@ -6,7 +6,7 @@ import queue
 import random
 from typing import Any
 from speaker import Enrollment, SpeakerError
-from persona import Persona, wake_prefix
+from persona import Persona, strip_wake
 
 SPEECH_FRAME_BYTES = 16384
 SPEECH_CHUNK_CHARACTERS = 400
@@ -16,7 +16,6 @@ class Engine:
     def __init__(self, models, audio, emit, speaker=None, wake_factory=None, persona=None):
         self.models, self.audio = models, audio
         self.persona = persona or Persona()
-        self.wake_prefix = wake_prefix(self.persona.wake_phrase)
         self.mode_revision = 0
         self.emit = lambda event: emit({**event, **({'revision': self.mode_revision} if self.mode_revision else {})})
         self.speaker = speaker
@@ -40,6 +39,7 @@ class Engine:
         self.followup = None
         self.filler_stop = threading.Event()
         self.filler_cache = {}
+        self.progress_cache = {}
         self.filler_last = None
         self.filler_prewarm = None
 
@@ -65,14 +65,20 @@ class Engine:
         self.emit({'type': 'cancelled'})
         self.speaker_status()
 
+    def voice_ready(self):
+        """Voice input is usable: the speaker filter is off, or a voice is enrolled."""
+        return not self.persona.speaker_filter or bool(self.speaker and self.speaker.profile)
+
     def speaker_status(self, message=''):
         count = len(self.enrollment.samples) if self.enrollment else 0
         self.emit({'type': 'speaker', 'registered': bool(self.speaker and self.speaker.profile),
+                   'filter': self.persona.speaker_filter,
                    **({'followup': self.followup} if self.followup else {}),
                    'enrolling': self.enrollment is not None, 'count': count,
                    'message': message or (f'Enrollment {count}/6. Hold PTT for 2–8 seconds. ' +
                    ('Use a different short sentence.' if count < 4 else 'Held-out check: say another short sentence.')
-                   if self.enrollment else 'Voice filter ready.' if self.speaker and self.speaker.profile
+                   if self.enrollment else 'Speaker filter off.' if not self.persona.speaker_filter
+                   else 'Voice filter ready.' if self.speaker and self.speaker.profile
                    else 'Not enrolled. Choose Enroll voice; typed text still works.')})
 
     def status(self, state):
@@ -199,8 +205,10 @@ class Engine:
             if mode != 'active' or not self.enabled:
                 self.cancel()
             self.enabled = mode != 'off'
-            self.activation = mode == 'active' and bool(self.speaker and self.speaker.profile)
-            if self.enabled and (self.filler_prewarm is None or self.filler_prewarm.done()) and len(self.filler_cache) < len(self.persona.fillers):
+            self.activation = mode == 'active' and self.voice_ready()
+            if (self.enabled and (self.filler_prewarm is None or self.filler_prewarm.done())
+                    and (len(self.filler_cache) < len(self.persona.fillers)
+                         or len(self.progress_cache) < len(self.persona.progress))):
                 self.filler_prewarm = asyncio.create_task(self.prewarm_fillers())
             if mode == 'active' and not self.activation:
                 self.emit({'type': 'wake-error', 'message': 'Not enrolled. Choose Enroll voice before Active.'})
@@ -209,10 +217,13 @@ class Engine:
             else:
                 self.emit({'type': 'mode-ready', 'mode': mode})
             return
+        if kind == 'progress':
+            self.start_progress()
+            return
         if kind == 'followup':
             identity = data.get('id')
             if (isinstance(identity, str) and 0 < len(identity) <= 128 and self.enabled
-                    and not self.muted and not self.enrollment and self.speaker and self.speaker.profile):
+                    and not self.muted and not self.enrollment and self.voice_ready()):
                 self.followup = identity
                 self.awaiting_response = False
                 self.arm()
@@ -229,7 +240,7 @@ class Engine:
             if data.get('enabled') is not True:
                 self.cancel()
             elif (self.enabled and not self.muted and not self.paused and not self.tasks
-                  and self.state == 'idle' and self.speaker and self.speaker.profile and not self.enrollment):
+                  and self.state == 'idle' and self.voice_ready() and not self.enrollment):
                 self.activation = True
                 self.emit({'type': 'activation', 'enabled': True})
                 self.arm()
@@ -331,9 +342,13 @@ class Engine:
         try:
             enrolling = self.enrollment
             async with self.inference:
-                if self.speaker is None or (enrolling is None and self.speaker.profile is None):
+                if enrolling is None and not self.persona.speaker_filter:
+                    # Filter off: any voice is transcribed; transcribe() VAD-trims silence itself.
+                    trimmed = pcm
+                elif self.speaker is None or (enrolling is None and self.speaker.profile is None):
                     raise SpeakerError('Enroll your voice first. Typed text still works.')
-                trimmed, embedding = await asyncio.to_thread(self.speaker.analyze, pcm, enrolling is not None)
+                else:
+                    trimmed, embedding = await asyncio.to_thread(self.speaker.analyze, pcm, enrolling is not None)
                 if generation != self.generation:
                     return
                 if enrolling is not None:
@@ -347,14 +362,13 @@ class Engine:
                     self.status('idle')
                     self.speaker_status('Enrollment saved. Positive-only calibration; not authentication.' if profile else '')
                     return
-                if not self.speaker.accept(embedding):
+                if self.persona.speaker_filter and not self.speaker.accept(embedding):
                     self.status('idle')
                     self.speaker_status('Voice did not match. Nothing sent. Retry or enroll again.')
                     return
-                text = await asyncio.to_thread(self.models.transcribe, trimmed)
+                text = await asyncio.to_thread(self.models.transcribe, trimmed, trimmed=trimmed is not pcm)
                 if wake:
-                    prefix = self.wake_prefix.match(text)
-                    text = text[prefix.end():].strip() if prefix else ''
+                    text = strip_wake(self.persona.wake_phrase, text)
                     if not text:
                         raise SpeakerError(f'No command after {self.persona.wake_phrase}. Repeat with a longer command; nothing sent.')
             if generation == self.generation:
@@ -423,20 +437,33 @@ class Engine:
                 self.status('error')
                 self.emit({'type': 'error', 'stream': identity, 'message': 'Local streaming speech failed. Earlier speech may have played.'})
 
-    def filler_audio(self, text):
-        if text not in self.filler_cache:
-            self.filler_cache[text] = self.models.synthesize(text)
-        return self.filler_cache[text]
+    def filler_audio(self, text, cache=None):
+        cache = self.filler_cache if cache is None else cache
+        if text not in cache:
+            cache[text] = self.models.synthesize(text)
+        return cache[text]
 
     async def prewarm_fillers(self):
-        """Synthesize filler lines ahead of time so one plays instantly."""
+        """Synthesize filler and progress lines ahead of time so one plays instantly."""
         try:
-            for text in self.persona.fillers:
-                if text not in self.filler_cache:
-                    async with self.inference:
-                        await asyncio.to_thread(self.filler_audio, text)
+            for lines, cache in ((self.persona.fillers, self.filler_cache), (self.persona.progress, self.progress_cache)):
+                for text in lines:
+                    if text not in cache:
+                        async with self.inference:
+                            await asyncio.to_thread(self.filler_audio, text, cache)
         except Exception:
             pass  # fillers are optional; a real synthesis failure surfaces on replies
+
+    def start_progress(self):
+        """A long wait: play one ready progress line now; never wait for synthesis."""
+        # A reply's stream opens before any text; only one that has started speaking blocks this.
+        stream = self.speech_stream
+        if (not self.enabled or self.muted or self.enrollment or not self.progress_cache
+                or stream and (stream['seq'] or stream['queue'])):
+            return
+        text = random.choice(list(self.progress_cache))
+        self.filler_stop = threading.Event()
+        self.launch(self.speak_filler(self.progress_cache[text], self.filler_stop, delay=0))
 
     def start_filler(self, pcm):
         """Capture completion only; use ready audio, never wait for synthesis."""
@@ -449,11 +476,11 @@ class Engine:
         self.filler_stop = threading.Event()
         self.launch(self.speak_filler(self.filler_cache[text], self.filler_stop))
 
-    async def speak_filler(self, audio, stop):
+    async def speak_filler(self, audio, stop, delay=1.0):
         """Delay cached feedback one second; transcription runs independently."""
         try:
             async with self.playback:
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(delay)
                 if not stop.is_set():
                     pcm, rate = audio
                     await asyncio.to_thread(self.audio.play, pcm, rate, stop, lambda value: None)

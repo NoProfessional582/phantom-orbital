@@ -58,3 +58,19 @@ test('PTT may take armed ownership but never interrupts wake tail or playback ga
   voice.hold(true); voice.hold(false)
   expect(sent).toEqual([{ type: 'release' }])
 })
+
+test('with the speaker filter off, Active mode needs no enrollment', () => {
+  const sent: object[] = []
+  const chat = new ChatController({ async start() { return 'mock' }, async *events() {}, async stop() {} }, () => {})
+  const voice = new VoiceController(chat, m => sent.push(m), () => {})
+  voice.receive({ type: 'ready' }); voice.mode(true)
+  voice.receive({ type: 'speaker', registered: false, filter: false, enrolling: false, count: 0, message: 'Speaker filter off.' })
+  voice.setMode('active')
+  expect(voice.snapshot.notice).toBe('')
+  expect([...sent].reverse().find(m => (m as { type: string }).type === 'voice-mode')).toMatchObject({ mode: 'active' })
+  // With the filter on, an unenrolled user still falls back to PTT with guidance.
+  voice.receive({ type: 'speaker', registered: false, filter: true, enrolling: false, count: 0, message: '' })
+  voice.setMode('off'); voice.setMode('active')
+  expect(voice.snapshot.notice).toContain('Not enrolled')
+  expect([...sent].reverse().find(m => (m as { type: string }).type === 'voice-mode')).toMatchObject({ mode: 'voice' })
+})

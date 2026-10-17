@@ -8,7 +8,7 @@ import { ChatController } from './chat-controller'
 import { HermesClient } from './hermes-client'
 import { hermesSettings } from './hermes-settings'
 import { OpenAiClient } from './openai-client'
-import { loadConfig, personalityPrompt, type OrbConfig } from './orb-config'
+import { loadConfig, personaMessage, personalityPrompt, type OrbConfig } from './orb-config'
 import { SidecarClient } from './sidecar-client'
 import { VoiceController } from './voice-controller'
 import { trustedControl, canApproveHotkey } from './approval-controls'
@@ -16,6 +16,8 @@ import type { ChatSnapshot } from '../shared/chat'
 import { validVoiceMode } from '../shared/voice'
 import { ReminderInbox, type Reminder } from './reminders'
 import { migrateLegacyData } from './legacy-data'
+import { BackgroundWatch } from './background-tasks'
+import { randomUUID } from 'node:crypto'
 
 const WIDTH = 320, HEIGHT = 400
 const gallery = process.argv.includes('--gallery')
@@ -35,6 +37,7 @@ let hitGeometry: ChatHitGeometry | undefined
 let pointerStart = { x: 0, y: 0 }, windowStart = { x: 0, y: 0 }
 let reminders: Reminder[] = []
 let reminderInbox: ReminderInbox | undefined
+let background: BackgroundWatch | undefined
 const hasOutput = (s: ChatSnapshot) => !!(s.user || s.answer || s.notice || s.approval || voice?.snapshot.notice || reminders.length)
 
 if (uiPreview) app.setPath('userData', join(process.cwd(), '.cache/ui-preview-userdata'))
@@ -105,6 +108,16 @@ function create() {
     if (snapshot.approval && !snapshot.approval.pending) { win?.show(); win?.focus() }
   })
   if (configError) chat.warn(configError)
+  chat.onProgress = origin => voice?.progress(origin)
+  chat.progressNotice = personaMessage(config, 'stillWorking')
+  if (client instanceof HermesClient) {
+    // Sub-agent results arrive later as a new Hermes turn; show them like a reminder.
+    const hermes = client
+    background = new BackgroundWatch(session => hermes.sessionMessages(session), text => notify({
+      id: randomUUID(), title: personaMessage(config, 'backgroundDone'), message: text.trim().slice(0, 2000), url: ''
+    }), () => chat.snapshot.busy)
+    chat.onCompleted = ({ delegations }) => { if (hermes.lastSession) void background?.completed(hermes.lastSession, delegations) }
+  }
   if (!gallery && !uiPreview) {
     voice = new VoiceController(chat, message => sidecar?.send(message), () => {
       if (!voice?.snapshot.enabled || voice.snapshot.muted || ['transcribing', 'speaking', 'error'].includes(voice.snapshot.state)) holding = false
@@ -116,7 +129,7 @@ function create() {
       } else voice?.receive(message)
     }, () => voice?.disconnected(), mock && process.argv.includes('--voice-smoke'),
     join(app.getPath('userData'), 'voice-profiles', 'registered.json'),
-    config && { wakePhrase: config.persona.wakePhrase, voice: config.persona.voice, fillers: config.persona.fillers })
+    config && { wakePhrase: config.persona.wakePhrase, voice: config.persona.voice, fillers: config.persona.fillers, progress: config.persona.progress, speakerFilter: config.speakerFilter })
   }
   const { x, y } = safePosition()
   win = new BrowserWindow({
@@ -180,12 +193,7 @@ function create() {
     ]))
     tray.on('double-click', () => win?.isVisible() ? win.hide() : win?.show())
     // Hermes reminder scripts deliver here while Orb is visible, else they toast.
-    reminderInbox = new ReminderInbox(join(app.getPath('userData'), 'reminders'), () => !!win?.isVisible() && !locked, reminder => {
-      reminders = [...reminders, reminder].slice(-5)
-      if (win && !win.isVisible()) win.show() // hidden between the script's check and pickup
-      publishChat()
-      win?.webContents.send('orb:reveal')
-    })
+    reminderInbox = new ReminderInbox(join(app.getPath('userData'), 'reminders'), () => !!win?.isVisible() && !locked, notify)
     reminderInbox.start()
     const shortcut = globalShortcut.register('CommandOrControl+Shift+Space', toggleInput)
     if (!shortcut) {
@@ -209,6 +217,14 @@ function create() {
       publishChat()
     }).catch(() => voice?.disconnected())
   }
+}
+
+/** A reminder or background result: a card with a chime, shown even if the orb was hidden. */
+function notify(reminder: Reminder) {
+  reminders = [...reminders, reminder].slice(-5)
+  if (win && !win.isVisible()) win.show()
+  publishChat()
+  win?.webContents.send('orb:reveal')
 }
 
 function publishChat(snapshot: ChatSnapshot = chat.snapshot) {
@@ -237,7 +253,7 @@ function toggleInput() {
   chat.toggleInput()
   if (chat.snapshot.inputOpen) { win.show(); win.focus() }
 }
-app.on('will-quit', () => { globalShortcut.unregisterAll(); reminderInbox?.stop() })
+app.on('will-quit', () => { globalShortcut.unregisterAll(); reminderInbox?.stop(); background?.stop() })
 let quitting = false
 app.on('before-quit', event => {
   if (!quitting && sidecar?.pid) {
@@ -280,7 +296,7 @@ for (const channel of ['submit', 'text-activity', 'stop', 'toggle-input', 'dismi
       if (channel === 'voice-activation') voice?.setMode('active')
       if (channel === 'voice-preview' && voice?.snapshot.ready && !chat.snapshot.busy) {
         voice.mode(true)
-        sidecar?.send({ type: 'speak', chunks: [`Hello ${config?.user.name ?? 'there'}. I am ${config?.persona.name ?? 'Megan'}, speaking locally on this computer.`] })
+        sidecar?.send({ type: 'speak', chunks: [personaMessage(config, 'voicePreview')] })
       }
     }
   })
@@ -314,7 +330,10 @@ ipcMain.on('orb:geometry', (event, value: unknown) => {
   current.setIgnoreMouseEvents(ignore, { forward: true })
 })
 ipcMain.on('orb:drag', (event, action: unknown, x: unknown, y: unknown) => {
-  if (event.sender !== win?.webContents || gallery) return
+  if (gallery || !win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
+  // Ending a drag is always allowed so a lock mid-drag can't leave it stuck.
+  if (action === 'end') { if (moving) { moving = false; savePosition() } return }
+  if (!trustedControl(event, win.webContents, locked) || !Number.isFinite(x) || !Number.isFinite(y)) return
   if (action === 'start' && typeof x === 'number' && typeof y === 'number') {
     moving = true; pointerStart = { x, y }
     const [wx, wy] = win!.getPosition(); windowStart = { x: wx, y: wy }
@@ -323,6 +342,6 @@ ipcMain.on('orb:drag', (event, action: unknown, x: unknown, y: unknown) => {
   else if (action === 'move' && moving && typeof x === 'number' && typeof y === 'number') {
     const { x: wx, y: wy } = dragPosition(windowStart, pointerStart, { x, y })
     win!.setPosition(wx, wy)
-  } else if (action === 'end') { moving = false; savePosition() }
+  }
 })
 ipcMain.on('orb:hide', event => { if (event.sender === win?.webContents) win.hide() })

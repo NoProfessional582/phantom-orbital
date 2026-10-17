@@ -2,6 +2,35 @@ import { randomUUID } from 'node:crypto'
 import { parseSse, type SseEvent } from './sse'
 export class RunStartUncertain extends Error {}
 export class EventRecoveryGap extends Error {}
+export interface SessionMessage {
+  id: string; role: string; text: string; reply: boolean
+  /** A delegate_task call that went to the background: its id and sub-agent count. */
+  dispatch?: { delegation: string; count: number }
+  /** Hermes's delivery row for finished background sub-agents (no agent turn follows it). */
+  delivery?: { delegation: string; units: number; text: string }
+}
+
+/** Fields of a background dispatch tool result, if that is what this row is. */
+function dispatchOf(role: unknown, content: unknown): SessionMessage['dispatch'] {
+  if (role !== 'tool' || typeof content !== 'string' || !content.startsWith('{')) return undefined
+  try {
+    const result = JSON.parse(content) as Record<string, unknown>
+    if (result.status !== 'dispatched' || result.mode !== 'background' || typeof result.delegation_id !== 'string') return undefined
+    return { delegation: result.delegation_id, count: typeof result.count === 'number' && result.count > 0 ? result.count : 1 }
+  } catch { return undefined }
+}
+
+/** The sub-agent summaries from a delivery row, without Hermes's preamble or log paths. */
+function deliveryOf(kind: unknown, content: unknown): SessionMessage['delivery'] {
+  if (kind !== 'async_delegation_complete' || typeof content !== 'string') return undefined
+  const delegation = /BATCH COMPLETE\W+(deleg_[\w-]+)/.exec(content)?.[1]
+  if (!delegation) return undefined
+  const units = Number(/(\d+) subagent\(s\)/.exec(content)?.[1] ?? 1)
+  const sections = content.split(/^--- .*TASK \d+\/\d+:.*---$/m).slice(1)
+  const text = (sections.length ? sections : [content]).map(section => section.split(/\r?\n/)
+    .filter(line => !/^Full live transcript/i.test(line.trim())).join('\n').trim()).filter(Boolean).join('\n\n')
+  return { delegation, units: units > 0 ? units : 1, text }
+}
 class HermesHttpError extends Error {
   constructor(public status: number) { super(`Hermes HTTP ${status}`) }
 }
@@ -9,6 +38,10 @@ export class HermesClient {
   private session?: string
   private pendingSession?: Promise<string>
   private sessionGeneration = 0
+  /** Hermes writes a keepalive every 10 s; only this much total silence counts as a dropped stream. */
+  streamIdleMs = 60_000
+  /** The Hermes session the most recent run went to (kept across a conversation reset). */
+  lastSession?: string
   resetSession() { this.session = undefined; this.pendingSession = undefined; this.sessionGeneration++ }
   /** Create the next session early (e.g. while the user is still speaking). Safe to call repeatedly. */
   prepareSession(): Promise<string> {
@@ -51,6 +84,7 @@ export class HermesClient {
   async start(text: string): Promise<string> {
     // /v1/capabilities is static API discovery; skills/tools load server-side per run.
     const session = await this.prepareSession()
+    this.lastSession = session
     const init = { method: 'POST', headers: { 'Idempotency-Key': randomUUID() }, body: JSON.stringify({ input: text, session_id: session }) }
     let response: Response
     try { response = await this.request('/v1/runs', init) }
@@ -67,19 +101,29 @@ export class HermesClient {
   async *events(run: string, signal?: AbortSignal): AsyncGenerator<SseEvent> {
     let lastId: string | undefined, sequence = -1
     let pendingDelta = ''
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // No fixed deadline: a run may think for hours. A connection is dropped only
+    // after streamIdleMs of silence, and three drops in a row with no new event fail.
+    for (let failures = 0; failures < 3; failures++) {
+      const idle = new AbortController()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const touch = () => { clearTimeout(timer); timer = setTimeout(() => idle.abort(new DOMException('Hermes stream idle', 'TimeoutError')), this.streamIdleMs) }
+      touch()
       try {
         const response = await this.request(`/v1/runs/${encodeURIComponent(run)}/events`, {
-          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000), headers: lastId ? { 'Last-Event-ID': lastId } : {}
+          signal: signal ? AbortSignal.any([signal, idle.signal]) : idle.signal, headers: lastId ? { 'Last-Event-ID': lastId } : {}
         })
         if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) throw new Error('Invalid Hermes stream')
-        for await (const event of parseSse(response.body)) {
+        // Any bytes, keepalive comments included, prove the stream is alive.
+        const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ transform(chunk, out) { touch(); out.enqueue(chunk) } }), { signal: idle.signal })
+        for await (const event of parseSse(body)) {
           if (event.data.run_id !== run) throw new Error('Mismatched Hermes run')
+          delete event.data.orb_notice // reserved for Orb's own adapters
           if (event.data.event === 'replay.truncated') throw new EventRecoveryGap('Hermes event recovery gap')
           if (typeof event.data.seq === 'number') {
             if (event.data.seq <= sequence) continue
             sequence = event.data.seq
           }
+          failures = 0 // a new event: this connection was healthy
           if (event.id) lastId = event.id
           if (event.data.event === 'message.delta' && typeof event.data.delta === 'string') {
             const text = this.redact(pendingDelta + event.data.delta)
@@ -101,7 +145,7 @@ export class HermesClient {
       } catch (error) {
         if (signal?.aborted) throw error
         if (!(error instanceof TypeError) && !(error instanceof DOMException)) throw error
-      }
+      } finally { clearTimeout(timer) }
     }
     throw new Error('Hermes stream disconnected; run status is uncertain')
   }
@@ -119,6 +163,19 @@ export class HermesClient {
     if (result.run_id !== run || typeof result.status !== 'string') throw new Error('Invalid Hermes run status')
     if (typeof result.output === 'string') result.output = this.redact(result.output)
     return result
+  }
+  /** Recent messages of a session, newest page first. Only id/role/text are kept. */
+  async sessionMessages(session: string): Promise<SessionMessage[]> {
+    const result = await (await this.request(`/api/sessions/${encodeURIComponent(session)}/messages?order=latest&limit=50`)).json()
+    if (!result || !Array.isArray(result.data)) throw new Error('Invalid Hermes messages')
+    return (result.data as Record<string, unknown>[]).filter(m => m && (typeof m.id === 'string' || typeof m.id === 'number')).map(m => ({
+      id: String(m.id), role: String(m.role ?? ''),
+      text: typeof m.content === 'string' ? this.redact(m.content) : '',
+      // A reply, not a step toward one: assistant text with no tool calls.
+      reply: m.role === 'assistant' && typeof m.content === 'string' && !!m.content.trim() && !(Array.isArray(m.tool_calls) && m.tool_calls.length),
+      ...(dispatchOf(m.role, m.content) ? { dispatch: dispatchOf(m.role, m.content) } : {}),
+      ...(deliveryOf(m.display_kind, m.content) ? { delivery: { ...deliveryOf(m.display_kind, m.content)!, text: this.redact(deliveryOf(m.display_kind, m.content)!.text) } } : {})
+    }))
   }
   private redact(text: string) { return text.split(this.key).join('[redacted]') }
 }

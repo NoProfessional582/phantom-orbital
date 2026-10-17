@@ -49,3 +49,22 @@ test.each([{ wakePhrase: 'Megan' }, { wakePhrase: 'Hey Megan 2' }, { voice: { mo
   const root = project({ 'personas/megan/persona.json': { name: 'Megan', wakePhrase: 'Hey Megan', ...persona } })
   try { expect(() => loadConfig(root, {})).toThrow(/orb.config/) } finally { rmSync(root, { recursive: true, force: true }) }
 })
+
+test('the speaker filter is off unless orb.config.json turns it on', () => {
+  const persona = join(process.cwd(), 'personas', 'megan')
+  const config = (value?: unknown) => loadConfig(project({ 'orb.config.json': { persona, ...(value === undefined ? {} : { speakerFilter: value }) } }), {})
+  expect(config().speakerFilter).toBe(false)
+  expect(config(true).speakerFilter).toBe(true)
+  expect(() => config('yes')).toThrow('speakerFilter must be true or false')
+})
+
+test('persona messages fill in names and fall back to plain defaults', async () => {
+  const { personaMessage, DEFAULT_MESSAGES } = await import('./orb-config')
+  const megan = loadConfig(process.cwd(), {})
+  expect(personaMessage(megan, 'backgroundDone')).toBe("Megan finished your background task. You're welcome.")
+  expect(personaMessage(megan, 'voicePreview')).not.toContain('{{')
+  const plain = loadConfig(project({ 'personas/p/persona.json': { name: 'Nova', wakePhrase: 'Hey Nova' }, 'orb.config.json': { persona: 'personas/p', user: { name: 'Sam' } } }), {})
+  expect(plain.persona.messages).toEqual(DEFAULT_MESSAGES)
+  expect(personaMessage(plain, 'voicePreview')).toBe('Hello Sam. I am Nova, speaking locally on this computer.')
+  expect(() => loadConfig(project({ 'personas/p/persona.json': { name: 'Nova', wakePhrase: 'Hey Nova', messages: { stillWorking: 'two\nlines' } }, 'orb.config.json': { persona: 'personas/p' } }), {})).toThrow('messages.stillWorking')
+})

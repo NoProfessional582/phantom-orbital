@@ -22,3 +22,33 @@ test('long prose and unbroken unicode tokens are bounded per synthesis without d
     expect(chunks.join(' ')).not.toContain('\ufffd')
   }
 })
+
+test('stray markup characters never silence the rest of a streamed reply', async () => {
+  const { SentenceBuffer } = await import('./speech-text')
+  const cases: [string, string][] = [
+    ['It takes < 5 minutes. Then you are done. Enjoy.', 'It takes 5 minutes. Then you are done. Enjoy.'],
+    ['If x < 3 and y > 4 we stop. Done now.', 'If x 3 and y > 4 we stop. Done now.'],
+    ['Use the `ls command. Then cd home. Bye.', 'Use the ls command. Then cd home. Bye.'],
+    ['Note [sic this is fine. Then more. End.', 'Note sic this is fine. Then more. End.'],
+    ['A **bold start. Then plain. End.', 'A bold start. Then plain. End.'],
+    ['Keep <b>this</b> word. Done.', 'Keep this word. Done.'],
+    ['Read [the guide](https://example.com/x). Then rest.', 'Read the guide. Then rest.']
+  ]
+  for (const [reply, spoken] of cases) {
+    const once = new SentenceBuffer().update(reply, true).join(' ').replace(/\s+/g, ' ')
+    expect(once, reply).toBe(spoken)
+    // Streaming in small frames must reach the same result without revising released prose.
+    const streamed = new SentenceBuffer(), parts: string[] = []
+    for (let end = 1; end < reply.length; end += 3) parts.push(...streamed.update(reply.slice(0, end)))
+    parts.push(...streamed.update(reply, true))
+    expect(parts.join(' ').replace(/\s+/g, ' '), reply).toBe(spoken)
+  }
+})
+
+test('an unclosed inline marker is released once the inline window passes', async () => {
+  const { SentenceBuffer } = await import('./speech-text')
+  const buffer = new SentenceBuffer()
+  const reply = 'Start `here. ' + 'More words follow. '.repeat(30)
+  // Before the reply finishes, prose after the stray backtick is still spoken.
+  expect(buffer.update(reply).join(' ')).toContain('More words follow.')
+})

@@ -6,11 +6,19 @@ import { isAbsolute, join, resolve } from 'node:path'
 // read only in Electron main; API keys are referenced, never stored in the file.
 
 export interface PersonaVoice { model: string; lengthScale: number; noiseScale: number; noiseW: number; volume: number }
-export interface Persona { name: string; wakePhrase: string; personality: string; voice: PersonaVoice; fillers: string[] }
+/** Built-in lines the persona shows or says; {{name}} and {{user}} are filled in. */
+export interface PersonaMessages { stillWorking: string; backgroundDone: string; voicePreview: string }
+export interface Persona { name: string; wakePhrase: string; personality: string; voice: PersonaVoice; fillers: string[]; progress: string[]; messages: PersonaMessages }
 export type HarnessConfig =
   | { type: 'hermes'; endpoint?: string; home?: string; profile?: string }
   | { type: 'openai'; endpoint: string; model: string; apiKeyEnv?: string; apiKeyFile?: string; sendPersonality: boolean }
-export interface OrbConfig { user: { name: string }; persona: Persona; harness: HarnessConfig }
+export interface OrbConfig { user: { name: string }; persona: Persona; harness: HarnessConfig; speakerFilter: boolean }
+
+export const DEFAULT_MESSAGES: PersonaMessages = {
+  stillWorking: 'Still working on it…',
+  backgroundDone: '{{name}} finished a background task',
+  voicePreview: 'Hello {{user}}. I am {{name}}, speaking locally on this computer.'
+}
 
 export const DEFAULT_VOICE: PersonaVoice = { model: 'en_US-amy-medium', lengthScale: 0.7, noiseScale: 0.5, noiseW: 0.8, volume: 0.65 }
 
@@ -55,13 +63,21 @@ export function loadPersona(dir: string): Persona {
     noiseW: number(voiceRaw.noiseW, 'voice.noiseW', 0, 1.5, DEFAULT_VOICE.noiseW),
     volume: number(voiceRaw.volume, 'voice.volume', 0.05, 1, DEFAULT_VOICE.volume)
   }
-  if (raw.fillers !== undefined && (!Array.isArray(raw.fillers) || raw.fillers.length > 40)) fail('fillers must be a list of at most 40 short lines')
-  const fillers = ((raw.fillers as unknown[] | undefined) ?? []).map((line, i) => text(line, `fillers[${i}]`, 80))
+  // fillers: said when a voice request is captured. progress: said when a reply goes quiet for a while.
+  const lines = (field: 'fillers' | 'progress') => {
+    const value = raw[field]
+    if (value !== undefined && (!Array.isArray(value) || value.length > 40)) fail(`${field} must be a list of at most 40 short lines`)
+    return ((value as unknown[] | undefined) ?? []).map((line, i) => text(line, `${field}[${i}]`, 80))
+  }
+  const fillers = lines('fillers'), progress = lines('progress')
+  const messagesRaw = object(raw.messages, 'messages')
+  const messages = Object.fromEntries((Object.keys(DEFAULT_MESSAGES) as (keyof PersonaMessages)[])
+    .map(key => [key, text(messagesRaw[key], `messages.${key}`, 160, DEFAULT_MESSAGES[key])])) as unknown as PersonaMessages
   let personality = ''
   const personalityPath = join(dir, 'personality.md')
   if (existsSync(personalityPath)) personality = readFileSync(personalityPath, 'utf8').replace(/^﻿/, '').trim()
   if (personality.length > 20_000) fail('personality.md must be under 20,000 characters')
-  return { name, wakePhrase, personality, voice, fillers }
+  return { name, wakePhrase, personality, voice, fillers, progress, messages }
 }
 
 function harness(raw: Record<string, unknown>): HarnessConfig {
@@ -95,14 +111,24 @@ export function loadConfig(root: string, env: NodeJS.ProcessEnv = process.env): 
   const raw = existsSync(path) ? readJson(path, 'orb.config.json') : {}
   const personaPath = text(raw.persona, 'persona', 300, 'personas/megan')
   const user = object(raw.user, 'user')
+  if (raw.speakerFilter !== undefined && typeof raw.speakerFilter !== 'boolean') fail('speakerFilter must be true or false')
   return {
     user: { name: text(user.name, 'user.name', 60, 'the user') },
     persona: loadPersona(isAbsolute(personaPath) ? personaPath : join(root, personaPath)),
-    harness: harness(object(raw.harness, 'harness'))
+    harness: harness(object(raw.harness, 'harness')),
+    // Off by default: any voice is transcribed. true requires an enrolled voice match.
+    speakerFilter: raw.speakerFilter === true
   }
 }
 
+function fill(text: string, config: OrbConfig): string {
+  return text.replace(/\{\{\s*name\s*\}\}/g, config.persona.name).replace(/\{\{\s*user\s*\}\}/g, config.user.name)
+}
+
 /** Personality text with {{name}} / {{user}} filled in. */
-export function personalityPrompt(config: OrbConfig): string {
-  return config.persona.personality.replace(/\{\{\s*name\s*\}\}/g, config.persona.name).replace(/\{\{\s*user\s*\}\}/g, config.user.name)
+export function personalityPrompt(config: OrbConfig): string { return fill(config.persona.personality, config) }
+
+/** A built-in persona line with {{name}} / {{user}} filled in. */
+export function personaMessage(config: OrbConfig | undefined, key: keyof PersonaMessages): string {
+  return config ? fill(config.persona.messages[key], config) : DEFAULT_MESSAGES[key].replace('{{name}}', 'Megan').replace('{{user}}', 'there')
 }

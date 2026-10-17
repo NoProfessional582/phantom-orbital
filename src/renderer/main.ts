@@ -172,7 +172,9 @@ function renderTranscript(notice: string, forceBottom = false) {
 }
 const dismiss = document.createElement('button'); dismiss.className = 'caption-close'; dismiss.textContent = '×'; dismiss.title = 'Dismiss transcript'; dismiss.setAttribute('aria-label', 'Dismiss transcript'); dismiss.addEventListener('pointerdown', event => event.preventDefault()); dismiss.addEventListener('click', () => window.orb?.dismiss()); captions.append(dismiss)
 const inputForm = document.createElement('form'); inputForm.className = 'chat-input'; inputForm.hidden = true
-const input = document.createElement('input'); input.type = 'text'; input.maxLength = 8000; input.placeholder = 'Ask Hermes…'; input.setAttribute('aria-label', 'Message Hermes'); input.autocomplete = 'off'
+const input = document.createElement('input'); input.type = 'text'; input.maxLength = 8000; input.autocomplete = 'off'
+function labelInput() { input.placeholder = `Ask ${assistant.name}…`; input.setAttribute('aria-label', `Message ${assistant.name}`) }
+labelInput()
 const send = document.createElement('button'); send.type = 'submit'; send.textContent = 'Send'
 inputForm.append(input, send); chatStack.append(inputForm)
 inputForm.addEventListener('submit', event => { event.preventDefault(); if (!input.value.trim() || input.disabled) return; window.orb?.submit(input.value); input.value = '' })
@@ -180,7 +182,7 @@ input.addEventListener('input', () => { reveal(); window.orb?.textActivity(input
 input.addEventListener('focus', () => { if (input.value) reveal() })
 input.addEventListener('keydown', event => { if (event.key === 'Escape') window.orb?.toggleInput() })
 window.orb?.onChat(snapshot => {
-  if (snapshot.assistant) assistant = snapshot.assistant
+  if (snapshot.assistant) { assistant = snapshot.assistant; labelInput() }
   const previousInputTop = inputForm.hidden ? 0 : inputForm.getBoundingClientRect().top
   const previousStackShape = `${captions.hidden}:${approvalCard.hidden}:${inputForm.hidden}`
   if (snapshot.transcriptDismissed) transcript.dismiss()
@@ -216,7 +218,7 @@ window.orb?.onChat(snapshot => {
   voiceButton.setAttribute('aria-label', `${voiceModeLabel(currentMode)}. ${modeDescription}${pendingDescription} Next: ${nextMode}. Ctrl+Alt+M is emergency Off.`)
   voiceButton.title = voiceButton.getAttribute('aria-label')!
   voiceButton.setAttribute('aria-pressed', String(!!voice?.enabled))
-  holdButton.disabled = !voice?.ready || !voice.enabled || voice.muted || (!voice.registered && !voice.enrolling) || snapshot.busy || !!voice.speechActive || (!voice.followupActive && !['idle', 'listening', 'armed'].includes(voice.state))
+  holdButton.disabled = !voice?.ready || !voice.enabled || voice.muted || (!voice.registered && !voice.enrolling && voice.speakerFilter !== false) || snapshot.busy || !!voice.speechActive || (!voice.followupActive && !['idle', 'listening', 'armed'].includes(voice.state))
   const notice = isRoutineVoiceNotice(snapshot.notice) ? '' : snapshot.notice
   const visible = reminders.length > 0 || !snapshot.transcriptDismissed && (transcript.turns.length > 0 || !!notice && notice !== 'New conversation.')
   captions.classList.toggle('active', visible); captions.hidden = !visible || !!currentCard

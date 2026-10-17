@@ -8,16 +8,26 @@ from test_wake_engine import fixture, settle
 from wake import WakeCapture
 
 
-@pytest.mark.parametrize('text', ['Hey Megan.', 'No command here.', 'Please ask Hey Megan tomorrow.'])
-def test_wake_alone_false_wake_and_nonprefix_never_submit(text):
+@pytest.mark.parametrize('text', ['Hey Megan.', 'No command here.', 'I began to ask tomorrow.'])
+def test_wake_alone_false_wake_and_missing_phrase_never_submit(text):
     async def run():
         e, _, events = fixture()
-        e.models.transcribe = lambda pcm: text
+        e.models.transcribe = lambda pcm, **_: text
         await e.transcribe(np.ones(48000,dtype=np.float32), e.generation, wake=True)
         assert not any(x['type']=='transcript' for x in events)
         assert any(x['type']=='speaker' and 'No command' in x['message'] for x in events)
     asyncio.run(run())
 
+
+
+def test_words_before_the_wake_phrase_are_dropped_not_the_command():
+    # The keyword spotter already heard the phrase; pre-roll speech ahead of it is not the command.
+    async def run():
+        e, _, events = fixture()
+        e.models.transcribe = lambda pcm, **_: 'Please ask Hey Megan tomorrow.'
+        await e.transcribe(np.ones(48000,dtype=np.float32), e.generation, wake=True)
+        assert [x['text'] for x in events if x['type']=='transcript'] == ['tomorrow.']
+    asyncio.run(run())
 
 def test_wrong_speaker_rejects_before_whisper_and_preserves_threshold():
     class Wrong(AcceptedFilter):
@@ -38,7 +48,7 @@ def test_insufficient_combined_speech_rejects_before_whisper():
         e, _, events = fixture()
         e.speaker = VoiceFilter(e.models, '.cache/m6-unit-nonexistent.json', embed=lambda pcm: np.r_[1.,np.zeros(255)])
         e.speaker.profile = {'threshold':.9,'embedding':np.r_[1.,np.zeros(255)]}
-        e.models.transcribe = lambda pcm: (_ for _ in ()).throw(AssertionError('no STT'))
+        e.models.transcribe = lambda pcm, **_: (_ for _ in ()).throw(AssertionError('no STT'))
         await e.transcribe(np.r_[np.ones(16000,dtype=np.float32)*.1,np.zeros(32000,dtype=np.float32)], e.generation,wake=True)
         assert not any(x['type']=='transcript' for x in events)
         assert any('too short' in x.get('message','') for x in events)

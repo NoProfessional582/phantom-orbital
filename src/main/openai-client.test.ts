@@ -47,6 +47,26 @@ test('server errors finish the run as failed', async () => {
   const chat = new ChatController(new OpenAiClient('http://localhost:1234/v1', 'm', '', '', transport), () => {})
   await chat.submit('hi')
   expect(chat.snapshot.busy).toBe(false)
+  expect(chat.snapshot.notice).toContain('HTTP 500')
+})
+
+test('an unreachable server is a plain failure, not an uncertain run', async () => {
+  const transport = (async () => { throw new TypeError('fetch failed') }) as unknown as typeof fetch
+  const chat = new ChatController(new OpenAiClient('http://localhost:1234/v1', 'm', '', '', transport), () => {})
+  await chat.submit('hi')
+  expect(chat.snapshot.busy).toBe(false)
+  expect(chat.snapshot.notice).toBe('AI server unreachable. Check that it is running and matches orb.config.json.')
+  // Typing again works immediately; no Stop needed.
+  await chat.submit('again')
+  expect(chat.snapshot.user).toBe('again')
+})
+
+test('only the most recent runs are kept in memory', async () => {
+  const client = new OpenAiClient('http://localhost:1234/v1', 'm')
+  const ids: string[] = []
+  for (let i = 0; i < 15; i++) ids.push(await client.start(`run ${i}`))
+  expect((await client.status(ids[14])).status).toBe('running')
+  expect((await client.status(ids[0])).status).toBe('failed') // forgotten
 })
 
 test.each(['http://example.com/v1', 'ftp://127.0.0.1/v1', 'https://u:p@example.com/v1', 'https://example.com/v1?key=x', 'nope'])('rejects unsafe endpoint %s', endpoint => {

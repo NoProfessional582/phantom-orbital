@@ -17,7 +17,7 @@ class Filter:
 
 def test_enrollment_uses_six_ptt_releases_never_transcribes_or_emits_user_text():
     class NoTranscription(Models):
-        def transcribe(self, pcm):
+        def transcribe(self, pcm, trimmed=False):
             raise AssertionError('Enrollment must never reach STT')
     async def run():
         audio, events, filt = Audio(), [], Filter()
@@ -42,7 +42,7 @@ def test_rejection_never_transcribes_or_emits_a_user_message():
         def accept(self, embedding):
             return False
     class NoTranscription(Models):
-        def transcribe(self, pcm):
+        def transcribe(self, pcm, trimmed=False):
             raise AssertionError('Rejected speech must never reach STT')
     async def run():
         events = []

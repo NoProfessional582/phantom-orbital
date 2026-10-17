@@ -1,6 +1,7 @@
 {
   "persona": "personas/megan",
   "user": { "name": "Alex" },
+  "speakerFilter": false,
   "harness": {
     "type": "hermes",
     "profile": "megan"

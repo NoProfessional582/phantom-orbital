@@ -26,7 +26,7 @@ test('missing isolated Python fails without blocking shutdown or starting anothe
   expect(client.pid).toBeUndefined()
 })
 
-test('sidecar death can restart locally at most twice without replaying microphone intent', async () => {
+test('sidecar death can restart locally, and a restart that comes up resets the attempt limit', async () => {
   const { SidecarClient } = await import('./sidecar-client')
   let deaths = 0
   const client = new SidecarClient(resolve('sidecar'), () => {}, () => { deaths++ }, false, resolve('.cache/m5-client/voice-profile.json'))
@@ -39,6 +39,15 @@ test('sidecar death can restart locally at most twice without replaying micropho
     expect(client.pid).not.toBe(first)
     expect(deaths).toBe(1)
     await client.restart()
-    await expect(client.restart()).rejects.toThrow('restart limit')
+    await client.restart() // a third works too: the limit counts failures in a row
+    expect(client.pid).toBeGreaterThan(0)
   } finally { await client.close() }
 }, 30_000)
+
+test('two failed restarts in a row hit the limit', async () => {
+  const { SidecarClient } = await import('./sidecar-client')
+  const client = new SidecarClient(resolve('.cache/absent-sidecar'), () => {}, () => {})
+  await expect(client.restart()).rejects.toThrow('Local voice sidecar unavailable')
+  await expect(client.restart()).rejects.toThrow('Local voice sidecar unavailable')
+  await expect(client.restart()).rejects.toThrow('restart limit')
+})

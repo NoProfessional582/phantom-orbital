@@ -73,6 +73,9 @@ def test_transcribes_vad_trimmed_memory_on_cpu_after_cuda_failure(tmp_path):
     assert calls[0][1]['local_files_only'] is True
     assert calls[1][1]['compute_type'] == 'int8'
     assert len(calls[-1][1]) == 10
+    # Audio the speaker filter already trimmed is not trimmed a second time.
+    assert models.transcribe(np.ones(40, dtype=np.float32), trimmed=True) == 'local transcript'
+    assert len(calls[-1][1]) == 40
 
 
 def test_amy_synthesis_keeps_tuning_and_pcm_local(tmp_path):

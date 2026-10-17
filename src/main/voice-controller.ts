@@ -20,14 +20,16 @@ export class VoiceController {
     this.snapshot.muted = false
     this.snapshot.mode = value === 'off' ? 'off' : 'voice'
     this.snapshot.pendingMode = undefined
-    this.snapshot.notice = value !== 'off' && !this.snapshot.registered ? 'Not enrolled. Choose Enroll voice; typed text still works.' : ''
-    const target = value === 'active' && !this.snapshot.registered ? 'voice' : value
+    this.snapshot.notice = value !== 'off' && !this.voiceReady ? 'Not enrolled. Choose Enroll voice; typed text still works.' : ''
+    const target = value === 'active' && !this.voiceReady ? 'voice' : value
     if (target === 'active') this.snapshot.pendingMode = 'active'
     this.send({ type: 'voice-mode', mode: target, revision: ++this.modeRevision })
     this.pause(this.chat.snapshot.busy || !!this.stream)
     this.pendingCancel = false
     this.changed()
   }
+  /** Voice input is usable: the speaker filter is off, or a voice is enrolled. */
+  private get voiceReady() { return this.snapshot.speakerFilter === false || !!this.snapshot.registered }
   private voiceRun = false
   private wasBusy = false
   private expectingTranscript = false
@@ -74,6 +76,10 @@ export class VoiceController {
       void this.chat.newConversation(true)
     }, this.origin === 'voice' ? 5000 : 60000)
     this.expiry.unref?.()
+  }
+  /** The reply has gone quiet for a while: a voice request also hears a short local line. */
+  progress(origin: 'text' | 'voice') {
+    if (origin === 'voice' && this.voiceRun && this.snapshot.enabled && this.snapshot.ready && !this.snapshot.muted && !this.stream?.sent) this.send({ type: 'progress' })
   }
   activation(enabled: boolean) {
     this.setMode(enabled ? 'active' : 'voice')
@@ -311,6 +317,7 @@ export class VoiceController {
     } else if (data.type === 'speaker' && typeof data.registered === 'boolean' && typeof data.enrolling === 'boolean' && Number.isInteger(data.count) && Number(data.count) >= 0 && Number(data.count) <= 6 && typeof data.message === 'string' && data.message.length <= 600) {
       this.expectingTranscript = false
       this.snapshot.registered = data.registered
+      if (typeof data.filter === 'boolean') this.snapshot.speakerFilter = data.filter
       this.snapshot.enrolling = data.enrolling && this.snapshot.enabled && !this.snapshot.muted && !this.pendingCancel
       this.snapshot.enrollmentCount = Number(data.count)
       this.snapshot.notice = this.speechNotice || (this.snapshot.enabled ? data.message : '')

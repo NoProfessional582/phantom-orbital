@@ -104,7 +104,7 @@ def test_cancel_off_mute_during_grace_discards_queued_and_stale_audio(control):
 def test_wake_only_grace_never_submits_and_keeps_ordinary_rearm():
     async def run():
         e, a, events = fixture()
-        e.models.transcribe = lambda pcm: 'Hey Megan.'
+        e.models.transcribe = lambda pcm, **_: 'Hey Megan.'
         await e.command({'type': 'mode', 'enabled': True})
         await e.command({'type': 'activation', 'enabled': True})
         await settle(lambda: a.listening)

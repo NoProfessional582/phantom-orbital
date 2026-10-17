@@ -24,7 +24,7 @@ class Detector:
 
 class WakeModels(Models):
     def trim(self, pcm): return pcm[np.abs(pcm) > .01]
-    def transcribe(self, pcm): return 'Hey Megan, tell me about Hey Megan tomorrow.'
+    def transcribe(self, pcm, trimmed=False): return 'Hey Megan, tell me about Hey Megan tomorrow.'
 
 
 def fixture(speaker=None):

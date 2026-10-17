@@ -1,7 +1,8 @@
 """Capture-end fillers: local, cached, concurrent with STT, serialized with replies."""
 import asyncio
 from engine import Engine
-from fillers import PHRASES
+from fillers import PHRASES, PROGRESS
+WARMED = PHRASES + PROGRESS  # every line synthesized ahead of time
 from test_engine import Models, Audio, AcceptedFilter
 import threading
 import numpy as np
@@ -49,7 +50,7 @@ def test_handsfree_capture_plays_feedback_before_blocked_verification(source):
 def test_capture_end_plays_cached_filler_while_transcription_is_blocked():
     entered, release, played = threading.Event(), threading.Event(), threading.Event()
     class Slow(CountingModels):
-        def transcribe(self, pcm):
+        def transcribe(self, pcm, trimmed=False):
             entered.set()
             assert release.wait(3)
             return super().transcribe(pcm)
@@ -63,14 +64,14 @@ def test_capture_end_plays_cached_filler_while_transcription_is_blocked():
         await e.command({'type': 'voice-mode', 'mode': 'voice', 'revision': 1})
         await e.filler_prewarm
         try:
-            assert sorted(models.spoken) == sorted(PHRASES)
+            assert sorted(models.spoken) == sorted(WARMED)
             await e.command({'type': 'start'})
             await e.command({'type': 'release'})
             await e.command({'type': 'release'})
             assert await asyncio.to_thread(entered.wait, 1.5)
             assert await asyncio.to_thread(played.wait, 1.5), 'filler must play before STT returns'
             assert len(audio.played) == 1
-            assert len(models.spoken) == len(PHRASES), 'capture path must not synthesize'
+            assert len(models.spoken) == len(WARMED), 'capture path must not synthesize'
             assert not any(x['type'] == 'transcript' for x in events)
         finally:
             release.set()
@@ -119,11 +120,11 @@ def test_voice_on_prewarms_every_phrase_once_and_filler_plays_from_cache():
         e, models, audio, events = engine()
         await e.command({'type': 'voice-mode', 'mode': 'voice', 'revision': 1})
         await e.filler_prewarm
-        assert sorted(models.spoken) == sorted(PHRASES)
+        assert sorted(models.spoken) == sorted(WARMED)
         await e.command({'type': 'start'})
         await e.command({'type': 'release'})
         await e.wait()
-        assert len(audio.played) == 1 and len(models.spoken) == len(PHRASES)
+        assert len(audio.played) == 1 and len(models.spoken) == len(WARMED)
         assert not any(x['type'] in ('state', 'error') and x.get('state') == 'speaking' for x in events)
     asyncio.run(run())
 
@@ -155,7 +156,7 @@ def test_stop_off_mute_interrupt_feedback_and_discard_pending_transcript(control
             entered.set()
             assert cancelled.wait(2)
     class Slow(CountingModels):
-        def transcribe(self, pcm):
+        def transcribe(self, pcm, trimmed=False):
             transcribing.set()
             assert release.wait(3)
             return 'stale command'
@@ -202,7 +203,7 @@ def test_noncommands_and_enrollment_are_silent_but_rejected_capture_never_sends_
         await e.command({'type': 'release'})
         await e.wait()
         assert len(audio.played) == int(source == 'rejected')
-        assert len(models.spoken) == len(PHRASES), 'cache miss must skip, not delay capture with TTS'
+        assert len(models.spoken) == len(WARMED), 'cache miss must skip, not delay capture with TTS'
         if source in ('enrollment', 'rejected'):
             assert not any(x['type'] == 'transcript' for x in events)
     asyncio.run(run())
@@ -218,7 +219,7 @@ def test_handsfree_no_command_window_never_plays_feedback(source):
         await e.filler_prewarm
         try:
             if source == 'wake':
-                e.models.transcribe = lambda pcm: 'Hey Megan.'
+                e.models.transcribe = lambda pcm, **_: 'Hey Megan.'
                 await e.command({'type': 'activation', 'enabled': True})
                 await settle(lambda: audio.listening)
                 await feed_frames(audio, 4, .1)

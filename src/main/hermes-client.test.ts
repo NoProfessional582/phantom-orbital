@@ -183,3 +183,33 @@ test('prepareSession creates the session once ahead of start and reset invalidat
   client.resetSession()
   await expect(client.prepareSession()).resolves.toBe('s2')
 })
+
+function slowStream(parts: [number, string][]) {
+  // Each part is written after its delay; the stream then stays open until aborted.
+  return (async (_url: string, init?: RequestInit) => new Response(new ReadableStream({
+    async start(c) {
+      for (const [delay, text] of parts) {
+        await new Promise(resolve => setTimeout(resolve, delay))
+        if (init?.signal?.aborted) return
+        c.enqueue(new TextEncoder().encode(text))
+      }
+    }
+  }), { headers: { 'content-type': 'text/event-stream' } })) as unknown as typeof fetch
+}
+
+test('a long run with only keepalives never times out', async () => {
+  const keepalives: [number, string][] = Array.from({ length: 12 }, () => [25, ': keepalive\n\n'])
+  const client = new HermesClient('http://127.0.0.1:18642', 'orb-mock-only', slowStream([...keepalives, [0, 'id: 1\ndata: {"event":"run.completed","run_id":"r","seq":1,"output":"done"}\n\n']]))
+  client.streamIdleMs = 100 // far shorter than the 300 ms run
+  const events = []; for await (const e of client.events('r')) events.push(e.data.event)
+  expect(events).toEqual(['run.completed'])
+})
+
+test('a stream that goes silent fails after three idle drops', async () => {
+  let connects = 0
+  const silent = slowStream([[0, ': open\n\n']])
+  const client = new HermesClient('http://127.0.0.1:18642', 'orb-mock-only', ((url: string, init?: RequestInit) => { connects++; return silent(url, init) }) as typeof fetch)
+  client.streamIdleMs = 40
+  await expect((async () => { for await (const _ of client.events('r')) { /* none */ } })()).rejects.toThrow('run status is uncertain')
+  expect(connects).toBe(3)
+})

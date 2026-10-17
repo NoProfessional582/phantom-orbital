@@ -29,7 +29,7 @@ class Audio:
 
 class Models:
     device = 'cpu'
-    def transcribe(self, pcm):
+    def transcribe(self, pcm, trimmed=False):
         return 'synthetic request'
     def synthesize(self, text):
         return np.ones(100, dtype=np.float32), 22050
@@ -62,7 +62,7 @@ def test_mute_cancels_pending_transcription_and_releases_mic():
     import threading
     entered, release = threading.Event(), threading.Event()
     class Slow(Models):
-        def transcribe(self, pcm):
+        def transcribe(self, pcm, trimmed=False):
             entered.set()
             release.wait(2)
             return 'must not be sent'
