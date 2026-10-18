@@ -94,15 +94,72 @@ test('stop after backend completion releases the synthesis-gap capture pause wit
   expect(sent.some(e => e.type === 'start')).toBe(false)
 })
 
-test.each(['message.interim', 'tool.started', 'approval.request', 'run.failed'] as const)('%s aborts provisional audio without narrating its payload or replaying final prose', async event => {
+test.each(['message.interim', 'tool.started', 'approval.request'] as const)('%s lets a quick spoken line finish, then speaks only the final answer', async event => {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const sent: Record<string, unknown>[] = []
+  let voice: VoiceController
+  const chat = new ChatController({
+    async start() { return 'preamble' }, async stop() {},
+    async *events() {
+      yield { data: { event: 'message.delta', delta: 'Let me check that. Looking at the unfinished' } }
+      yield { data: { event, request_id: 'request', command: 'never speak this command', text: 'never speak interim', already_streamed: true } }
+      await gate
+      yield { data: { event: 'run.completed', output: 'Let me check that. It is sunny.' } }
+    }
+  }, snapshot => voice.chatChanged(snapshot))
+  voice = new VoiceController(chat, m => sent.push(m as Record<string, unknown>), () => {})
+  voice.receive({ type: 'ready' }); voice.mode(true)
+  voice.receive({ type: 'state', state: 'listening' }); voice.receive({ type: 'transcript', text: 'fixture' })
+  await tick()
+  const first = sent.find(e => e.type === 'speech-begin')!.stream
+  expect(sent.some(e => e.type === 'cancel')).toBe(false)
+  voice.receive({ type: 'speech-ack', stream: first, seq: 0 })
+  expect(sent.filter(e => e.type === 'speech-finish').map(e => e.stream)).toEqual([first])
+  voice.receive({ type: 'speech-done', stream: first, played: true })
+  release(); await tick()
+  const second = sent.filter(e => e.type === 'speech-begin').map(e => e.stream)
+  expect(second).toEqual([first, `${first}:final`])
+  voice.receive({ type: 'speech-ack', stream: second[1], seq: 0 })
+  voice.receive({ type: 'speech-done', stream: second[1], played: true })
+  expect(sent.filter(e => e.type === 'speech-append').map(e => e.text)).toEqual(['Let me check that.', 'It is sunny.'])
+  expect(sent.some(e => e.type === 'cancel')).toBe(false)
+  expect(sent).toContainEqual({ type: 'followup', id: first })
+  expect(voice.snapshot.notice).toBe('')
+})
+
+test('a final answer that arrives while the quick line is still playing waits for it', async () => {
+  const sent: Record<string, unknown>[] = []
+  let voice: VoiceController
+  const chat = new ChatController({
+    async start() { return 'preamble' }, async stop() {},
+    async *events() {
+      yield { data: { event: 'message.delta', delta: 'On it. ' } }
+      yield { data: { event: 'tool.started', tool: 'search' } }
+      yield { data: { event: 'run.completed', output: 'Done.' } }
+    }
+  }, snapshot => voice.chatChanged(snapshot))
+  voice = new VoiceController(chat, m => sent.push(m as Record<string, unknown>), () => {})
+  voice.receive({ type: 'ready' }); voice.mode(true)
+  voice.receive({ type: 'state', state: 'listening' }); voice.receive({ type: 'transcript', text: 'fixture' })
+  await tick()
+  const first = sent.find(e => e.type === 'speech-begin')!.stream
+  expect(sent.filter(e => e.type === 'speech-begin')).toHaveLength(1)
+  voice.receive({ type: 'speech-ack', stream: first, seq: 0 })
+  voice.receive({ type: 'speech-done', stream: first, played: true })
+  expect(sent.filter(e => e.type === 'speech-begin').map(e => e.stream)).toEqual([first, `${first}:final`])
+  expect(sent.filter(e => e.type === 'speech-append').map(e => e.text)).toEqual(['On it.', 'Done.'])
+})
+
+test('run.failed aborts provisional audio without replaying final prose', async () => {
+  const event = 'run.failed'
   const sent: Record<string, unknown>[] = []
   let voice: VoiceController
   const chat = new ChatController({
     async start() { return 'provisional' }, async stop() {},
     async *events() {
       yield { data: { event: 'message.delta', delta: 'Provisional sentence. ' } }
-      yield { data: { event, request_id: 'request', command: 'never speak this command', text: 'never speak interim', already_streamed: true } }
-      if (event !== 'run.failed') yield { data: { event: 'run.completed', output: 'Different final prose.' } }
+      yield { data: { event } }
     }
   }, snapshot => voice.chatChanged(snapshot))
   voice = new VoiceController(chat, m => sent.push(m as Record<string, unknown>), () => {})
@@ -111,8 +168,7 @@ test.each(['message.interim', 'tool.started', 'approval.request', 'run.failed'] 
   await tick()
   expect(sent.filter(e => e.type === 'speech-append').map(e => e.text)).toEqual(['Provisional sentence.'])
   expect(sent.some(e => e.type === 'cancel')).toBe(true)
-  if (event === 'run.failed') expect(chat.snapshot.notice).toContain('failed')
-  else expect(voice.snapshot.notice).toMatch(/interim.*Earlier speech may have played/)
+  expect(chat.snapshot.notice).toContain('failed')
 })
 
 test('unstreamed interim captions/tools are not spoken; only explicit final output is', async () => {

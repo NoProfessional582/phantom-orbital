@@ -34,7 +34,9 @@ export class VoiceController {
   private wasBusy = false
   private expectingTranscript = false
   private pendingCancel = false
-  private stream?: { id: string; buffer: SentenceBuffer; queue: string[]; bytes: number; seq: number; waiting: boolean; final: boolean; finished: boolean; sent: boolean }
+  private stream?: { id: string; source: string; spoken: string[]; preamble: boolean; buffer: SentenceBuffer; queue: string[]; bytes: number; seq: number; waiting: boolean; final: boolean; finished: boolean; sent: boolean }
+  /** Sentences spoken before Hermes turned to tools; the final answer skips them. */
+  private preamble?: string[]
   private runId?: string
   private paused?: boolean
   private speechNotice = ''
@@ -119,6 +121,7 @@ export class VoiceController {
     this.followup = undefined
     if (!preserveMode) this.snapshot.activation = false
     this.stream = undefined
+    this.preamble = undefined
     this.snapshot.speechActive = false
     this.snapshot.enrolling = false
     this.voiceRun = false
@@ -172,25 +175,38 @@ export class VoiceController {
       this.clearExpiry()
       this.followup = undefined
       if (this.stream) { this.send({ type: 'cancel' }); this.stream = undefined }
+      this.preamble = undefined
       this.voiceRun = snapshot.inputOrigin === 'voice'
       this.origin = this.voiceRun ? 'voice' : 'text'
       this.runId = this.voiceRun ? speech?.id : undefined
     }
     this.wasBusy = snapshot.busy
-    if (snapshot.stopping || snapshot.state === 'offline' || speech?.phase === 'failed' || this.stream && speech?.id !== this.stream.id) {
+    if (snapshot.stopping || snapshot.state === 'offline' || speech?.phase === 'failed' || this.stream && speech?.id !== this.stream.source) {
       this.stop()
     } else if (this.voiceRun && this.runId === speech?.id && this.snapshot.enabled && !this.snapshot.muted && speech) {
       if (speech.phase === 'interim') {
-        if (this.stream?.sent) this.refuse('Hermes identified streamed text as interim/tool progress. Earlier speech may have played; remaining speech stopped. Read the final captions.')
-      } else {
+        // Hermes moved on to tools after a quick line: let the sentences already
+        // released finish (never cut mid-word), drop the unfinished tail.
+        const stream = this.stream
+        if (stream?.sent && !stream.preamble) {
+          stream.preamble = true; stream.final = true
+          this.preamble = [...stream.spoken]
+          this.pump()
+        }
+      } else if (!this.stream?.preamble) {
+        const text = speech.text
         if (!this.stream) {
-          this.stream = { id: speech.id, buffer: new SentenceBuffer(), queue: [], bytes: 0, seq: 0, waiting: false, final: false, finished: false, sent: false }
-          this.send({ type: 'speech-begin', stream: speech.id })
+          const id = this.preamble === undefined ? speech.id : `${speech.id}:final`
+          this.stream = { id, source: speech.id, spoken: [], preamble: false, buffer: new SentenceBuffer(), queue: [], bytes: 0, seq: 0, waiting: false, final: false, finished: false, sent: false }
+          this.send({ type: 'speech-begin', stream: id })
         }
         const stream = this.stream
         try {
-          if (speech.text.length > 100_000) throw new Error('Speech source exceeds the 100,000-character limit')
-          const chunks = stream.buffer.update(speech.text, speech.phase === 'complete')
+          if (text.length > 100_000) throw new Error('Speech source exceeds the 100,000-character limit')
+          const chunks = stream.buffer.update(text, speech.phase === 'complete')
+          // The final answer follows the quick line in its own stream, without repeating it.
+          while (this.preamble?.length && chunks.length && chunks[0] === this.preamble[0]) { chunks.shift(); this.preamble.shift() }
+          stream.spoken.push(...chunks)
           const bytes = chunks.reduce((n, text) => n + Buffer.byteLength(text, 'utf8'), 0)
           if (stream.bytes + bytes > SPEECH_FRAME_BYTES) throw new Error('Local speech backlog exceeds the 16 KiB limit')
           stream.queue.push(...chunks); stream.bytes += bytes
@@ -264,7 +280,15 @@ export class VoiceController {
     }
     if (data.type === 'speech-done') {
       if (!this.stream?.finished) return
-      const id = this.stream.id
+      if (this.stream.preamble) {
+        // The quick line is done; the run's final answer gets its own stream.
+        this.stream = undefined
+        this.snapshot.speechActive = false
+        this.snapshot.state = this.snapshot.muted ? 'muted' : 'idle'
+        this.chatChanged(this.chat.snapshot)
+        this.changed(); return
+      }
+      const id = this.stream.source
       const played = this.stream.sent && this.stream.seq > 0 && data.played === true
       this.stream = undefined; this.voiceRun = false
       this.snapshot.speechActive = false
